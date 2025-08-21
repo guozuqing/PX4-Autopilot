@@ -1,0 +1,5 @@
+menuconfig EXAMPLES_SKY_APP
+	bool "sky_app"
+	default n
+	---help---
+		Enable support for sky_app example

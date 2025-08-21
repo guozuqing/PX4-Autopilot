@@ -1,0 +1,5 @@
+menuconfig DRIVERS_MY_SENSOR
+	bool "my_sensor"
+	default n
+	---help---
+		Enable support for my_sensor example

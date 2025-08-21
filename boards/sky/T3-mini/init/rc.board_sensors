@@ -1,0 +1,115 @@
+#!/bin/sh
+#
+# board sensors init
+#------------------------------------------------------------------------------
+
+# IMU1: BMI088 on SPI3 with rotation 24
+bmi088 -A -R 24 -s start
+bmi088 -G -R 24 -s start
+
+# IMU2: ICM45686 on SPI1 with rotation 24
+icm45686 -b 1 -s -R 24 start
+
+if param compare -s SENS_EN_BATT 1
+then
+	batt_smbus start -X
+
+fi
+
+# Lidar-Lite on I2C
+if param compare -s SENS_EN_LL40LS 2
+then
+	ll40ls start -X
+fi
+
+# mappydot lidar sensor
+if param compare -s SENS_EN_MPDT 1
+then
+	mappydot start -X
+fi
+
+# mb12xx sonar sensor
+if param greater -s SENS_EN_MB12XX 0
+then
+	mb12xx start -X
+fi
+
+# Lightware i2c lidar sensor
+if param greater -s SENS_EN_SF1XX 0
+then
+	lightware_laser_i2c start -X
+fi
+
+# vl53l1x i2c distance sensor
+if param compare -s SENS_EN_VL53L1X 1
+then
+	vl53l1x start -X
+fi
+
+# ADIS16448 spi external IMU
+if param compare -s SENS_EN_ADIS164X 1
+then
+	if param compare -s SENS_OR_ADIS164X 0
+	then
+		adis16448 -S start
+	fi
+	if param compare -s SENS_OR_ADIS164X 4
+	then
+		adis16448 -S start -R 4
+	fi
+fi
+
+# Eagle Tree airspeed sensor external I2C
+if param compare -s SENS_EN_ETSASPD 1
+then
+	ets_airspeed start -X
+fi
+
+# Sensirion SDP3X differential pressure sensor external I2C
+if param compare -s SENS_EN_SDP3X 1
+then
+	if ! sdp3x start -X
+	then
+		# try another common address
+		sdp3x start -X -a 0x22
+	fi
+fi
+
+# SHT3x temperature and hygrometer sensor, external I2C
+if param compare -s SENS_EN_SHT3X 1
+then
+	sht3x start -X
+	sht3x start -X -a 0x45
+fi
+
+# TE MS4525DO differential pressure sensor external I2C
+if param compare -s SENS_EN_MS4525DO 1
+then
+	ms4525do start -X
+fi
+
+# TE MS5525DSO differential pressure sensor external I2C
+if param compare -s SENS_EN_MS5525DS 1
+then
+	ms5525dso start -X
+fi
+
+# IR-LOCK sensor external I2C
+if param compare -s SENS_EN_IRLOCK 1
+then
+	irlock start -X
+fi
+
+# SPL06 sensor external I2C
+if param compare -s SENS_EN_SPL06 1
+then
+	spl06 -X start
+	spl06 -X -a 0x77 start
+fi
+
+
+
+# Internal magnetometer on I2C4
+iis2mdc -I -b 4 start
+icp201xx -I -a 0x64 -b 4 start
+icp201xx -X -a 0x63 -b 2 start

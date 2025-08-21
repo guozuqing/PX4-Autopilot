@@ -261,6 +261,7 @@ set(msg_files
 	versioned/VehicleRatesSetpoint.msg
 	versioned/VehicleStatus.msg
 	versioned/VtolVehicleStatus.msg
+	SensorSimple.msg
 )
 list(SORT msg_files)
 

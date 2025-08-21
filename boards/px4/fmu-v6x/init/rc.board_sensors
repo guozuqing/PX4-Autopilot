@@ -79,7 +79,7 @@ then
 		# Internal SPI bus ICM45686
 		adis16470 -s -R 0 start
 		iim42652 -s -R 6 start
-		icm45686 -s -R 10 start
+		icm45686 -b 1 -s -R 24 start
 	else
 		# Internal SPI bus 3x ICM45686
 		icm45686 -b 3 -s -R 0 start
@@ -90,21 +90,21 @@ else
 	if ver hwtypecmp V6X004
 	then
 		# Internal SPI bus ICM20649
-		icm20649 -s -R 6 start
+		icm45686 -b 1 -s -R 10 start
 	else
 		# Internal SPI BMI088
 		if ver hwbasecmp 009 010 011
 		then
-			bmi088 -A -R 6 -s start
-			bmi088 -G -R 6 -s start
+			bmi088 -A -R 24 -s start
+			bmi088 -G -R 24 -s start
 		else
 			if ver hwtypecmp V6X010
 			then
-				bmi088 -A -R 0 -s start
-				bmi088 -G -R 0 -s start
+				bmi088 -A -R 24 -s start
+				bmi088 -G -R 24 -s start
 			else
-				bmi088 -A -R 4 -s start
-				bmi088 -G -R 4 -s start
+				bmi088 -A -R 24 -s start
+				bmi088 -G -R 24 -s start
 			fi
 		fi
 	fi

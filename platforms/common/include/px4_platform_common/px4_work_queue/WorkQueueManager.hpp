@@ -91,8 +91,13 @@ static constexpr wq_config_t ttyUnknown{"wq:ttyUnknown", 1728, -32};
 
 static constexpr wq_config_t lp_default{"wq:lp_default", 2350, -50};
 
-static constexpr wq_config_t test1{"wq:test1", 2000, 0};
-static constexpr wq_config_t test2{"wq:test2", 2000, 0};
+static constexpr wq_config_t sky_app{"wq:sky_app", 2000, 0};
+
+// Test configurations for work queue tests
+static constexpr wq_config_t test1{"wq:test1", 2000, -51};
+static constexpr wq_config_t test2{"wq:test2", 2000, -52};
+static constexpr wq_config_t my_sensor{"wq:my_sensor", 2000, -53};
+
 
 } // namespace wq_configurations
 

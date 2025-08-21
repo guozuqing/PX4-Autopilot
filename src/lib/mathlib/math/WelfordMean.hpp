@@ -9,9 +9,8 @@
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  * 3. Neither the name PX4 nor the names of its contributors may be
  *    used to endorse or promote products derived from this software
  *    without specific prior written permission.
@@ -34,7 +33,7 @@
 /**
  * @file WelfordMean.hpp
  *
- * Welford's online algorithm for computing mean and variance.
+ * 使用 Welford 的在线算法来计算均值和方差。
  */
 
 #pragma once
@@ -48,87 +47,90 @@ template <typename Type = float>
 class WelfordMean
 {
 public:
-	// For a new value, compute the new count, new mean, the new M2.
-	bool update(const Type &new_value)
-	{
-		if (_count == 0) {
-			reset();
-			_count = 1;
-			_mean = new_value;
-			return false;
+    // 对于新的数据点，计算新的计数、均值和 M2（方差的一部分）
+    bool update(const Type &new_value)
+    {
+        // 第一个数据点的情况
+        if (_count == 0) {
+            reset();  // 重置状态
+            _count = 1;
+            _mean = new_value;  // 初始化均值
+            return false;  // 第一个数据点，无法计算方差
 
-		} else if (_count == UINT16_MAX) {
-			// count overflow
-			//  reset count, but maintain mean and variance
-			_M2 = _M2 / _count;
-			_M2_accum = 0;
+        } else if (_count == UINT16_MAX) {  // 防止计数溢出
+            // 计数溢出，重置计数器，但保持均值和方差
+            _M2 = _M2 / _count;  // 归一化 M2
+            _M2_accum = 0;
 
-			_count = 1;
+            _count = 1;  // 重置计数器
+        } else {
+            _count++;  // 增加数据计数
+        }
 
-		} else {
-			_count++;
-		}
+        // 计算新的均值
+        const Type delta{new_value - _mean};
+        const Type mean_change = delta / _count;
+        _mean = kahanSummation(_mean, mean_change, _mean_accum);  // 使用 Kahan 加法算法避免精度丢失
 
-		// mean accumulates the mean of the entire dataset
-		// delta can be very small compared to the mean, use algorithm to minimise numerical error
-		const Type delta{new_value - _mean};
-		const Type mean_change = delta / _count;
-		_mean = kahanSummation(_mean, mean_change, _mean_accum);
+        // 计算 M2（方差的一部分）
+        const Type M2_change = delta * (new_value - _mean);
+        _M2 = kahanSummation(_M2, M2_change, _M2_accum);  // 更新 M2
 
-		// M2 aggregates the squared distance from the mean
-		// count aggregates the number of samples seen so far
-		const Type M2_change = delta * (new_value - _mean);
-		_M2 = kahanSummation(_M2, M2_change, _M2_accum);
+        // 防止浮动精度导致负方差
+        _M2 = math::max(_M2, 0.f);
 
-		// protect against floating point precision causing negative variances
-		_M2 = math::max(_M2, 0.f);
+        // 如果均值或方差无效，重置并返回 false
+        if (!PX4_ISFINITE(_mean) || !PX4_ISFINITE(_M2)) {
+            reset();  // 重置状态
+            return false;  // 数据无效
+        }
 
-		if (!PX4_ISFINITE(_mean) || !PX4_ISFINITE(_M2)) {
-			reset();
-			return false;
-		}
+        return valid();  // 如果数据点数大于 2，则返回有效
+    }
 
-		return valid();
-	}
+    // 检查当前是否有足够的数据点来计算方差
+    bool valid() const { return _count > 2; }
 
-	bool valid() const { return _count > 2; }
-	auto count() const { return _count; }
+    // 获取当前数据点数
+    auto count() const { return _count; }
 
-	void reset()
-	{
-		_count = 0;
-		_mean = 0;
-		_M2 = 0;
+    // 重置算法的内部状态
+    void reset()
+    {
+        _count = 0;
+        _mean = 0;
+        _M2 = 0;
 
-		_mean_accum = 0;
-		_M2_accum = 0;
-	}
+        _mean_accum = 0;  // Kahan 加法的累积误差
+        _M2_accum = 0;    // Kahan 加法的累积误差
+    }
 
-	Type mean() const { return _mean; }
-	Type variance() const { return _M2 / (_count - 1); }
-	Type standard_deviation() const { return std::sqrt(variance()); }
+    // 返回当前均值
+    Type mean() const { return _mean; }
+
+    // 返回当前方差，注意：使用无偏估计
+    Type variance() const { return _M2 / (_count - 1); }
+
+    // 返回当前标准差（方差的平方根）
+    Type standard_deviation() const { return std::sqrt(variance()); }
 
 private:
+    // 使用 Kahan 加法算法计算 sum_previous 和 input 的和
+    inline Type kahanSummation(Type sum_previous, Type input, Type &accumulator)
+    {
+        const Type y = input - accumulator;  // 计算补偿值
+        const Type t = sum_previous + y;  // 求和
+        accumulator = (t - sum_previous) - y;  // 更新累积误差
+        return t;  // 返回新的和
+    }
 
-	// Use Kahan summation algorithm to get the sum of "sum_previous" and "input".
-	// This function relies on the caller to be responsible for keeping a copy of
-	// "accumulator" and passing this value at the next iteration.
-	// Ref: https://en.wikipedia.org/wiki/Kahan_summation_algorithm
-	inline Type kahanSummation(Type sum_previous, Type input, Type &accumulator)
-	{
-		const Type y = input - accumulator;
-		const Type t = sum_previous + y;
-		accumulator = (t - sum_previous) - y;
-		return t;
-	}
+    Type _mean{};   // 当前均值
+    Type _M2{};     // 方差的 M2 部分（平方和）
 
-	Type _mean{};
-	Type _M2{};
+    Type _mean_accum{};  // Kahan 加法的均值累积误差
+    Type _M2_accum{};    // Kahan 加法的 M2 累积误差
 
-	Type _mean_accum{};  ///< kahan summation algorithm accumulator for mean
-	Type _M2_accum{};    ///< kahan summation algorithm accumulator for M2
-
-	uint16_t _count{0};
+    uint16_t _count{0};  // 数据点的计数
 };
 
 } // namespace math

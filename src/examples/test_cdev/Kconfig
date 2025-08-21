@@ -1,0 +1,6 @@
+menuconfig EXAMPLES_TEST_CDEV
+
+    bool "test_cdev"
+    default n
+    -----help----
+        Enable support for test_cdev
