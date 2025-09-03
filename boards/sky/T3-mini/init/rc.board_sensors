@@ -1,0 +1,6 @@
+icm45686 -b 1 -s -R 36 start
+bmi088 -A -R 24 -s start
+bmi088 -G -R 24 -s start
+icp201xx -I -a 0x64 -b 4 start
+icp201xx -X -a 0x63 -b 2 start
+iis2mdc -R 28 -I -b 4 start
