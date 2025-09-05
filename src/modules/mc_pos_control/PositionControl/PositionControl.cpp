@@ -160,96 +160,158 @@ void PositionControl::_positionControl()
 
 //============================= 速度 PID 控制 =============================//
 
+// 速度环（world/NED系）：将速度期望 _vel_sp 与当前速度 _vel 的误差，
+// 通过 PID 形成期望加速度 _acc_sp，再由加速度—推力映射与姿态/推力限幅，得到最终推力 _thr_sp。
+// 同时实现垂直方向的抗积分风up、推力分配时的“垂直优先/水平留裕度”、以及水平通道的 Anti-Reset-Windup(ARW)。
 void PositionControl::_velocityControl(const float dt)
 {
-	// 垂直方向的积分项限幅，避免过大（以 1g 为界）
+	// ---------- 1) 垂直积分项限幅 ----------
+	// 目的：限制 I 项在 z 轴（NED：z 向下为正）上的绝对值，避免积分过大导致推力饱和与恢复缓慢。
+	// 这里以 1g 为界（单位：m/s^2 对等映射到 I 项语义，具体见 I 的单位定义与缩放关系）。
 	_vel_int(2) = math::constrain(_vel_int(2), -CONSTANTS_ONE_G, CONSTANTS_ONE_G);
 
-	// PID：a_sp_from_vel = Kp*(vel_sp-vel) + I - Kd*vel_dot
+	// ---------- 2) 速度 PID 生成期望加速度 ----------
+	// 误差：期望速度 - 当前速度
 	Vector3f vel_error = _vel_sp - _vel;
-	Vector3f acc_sp_velocity = vel_error.emult(_gain_vel_p) + _vel_int - _vel_dot.emult(_gain_vel_d);
 
-	// 若某些 setpoint/状态为 NaN，则相应通道不提供控制输入
+	// 经典 PID 的“PD+I”结构（在加速度域）：
+	// acc_sp_from_vel = Kp * (vel_sp - vel) + I - Kd * vel_dot
+	// 说明：
+	//  - _gain_vel_p / _gain_vel_d / _gain_vel_i 为向量按轴增益（可各向异性）。
+	//  - _vel_dot 为速度的导数（加速度的估计），用于 D 项抑制快速变化与前馈外扰。
+	Vector3f acc_sp_velocity =
+		vel_error.emult(_gain_vel_p)          // P：按轴比例增益
+		+ _vel_int                             // I：积分量（上一周期累积）
+		- _vel_dot.emult(_gain_vel_d);         // D：按轴微分增益作用在 vel_dot 上
+
+	// ---------- 3) 写入期望加速度（跳过 NaN 通道） ----------
+	// 某些轴上若 setpoint 或状态为 NaN，则不对该轴施加控制（便于上层按轴屏蔽/切换）。
 	ControlMath::addIfNotNanVector3f(_acc_sp, acc_sp_velocity);
 
-	// 将期望加速度映射为推力，并进行倾角/推力限幅
+	// ---------- 4) 加速度→推力映射（含倾角/推力限幅） ----------
+	// 将 _acc_sp 转换为姿态/推力目标：内部包含
+	//  - 计算机体 z 轴方向 body_z（与合加速度反向一致）
+	//  - 倾角限制（最大倾斜角 _lim_tilt）
+	//  - z 向推力标量（结合 _hover_thrust 与 cos 投影）
+	//  - 得到最终推力向量 _thr_sp（机体系 z 方向 * collective_thrust）
 	_accelerationControl();
 
-	// -------- 抗积分风up（垂直方向）--------
-	// 当推力在 z 方向达到上下界且速度误差继续推动同向积分时，冻结该方向的误差，抑制积分增长
-	if ((_thr_sp(2) >= -_lim_thr_min && vel_error(2) >= 0.f) ||
-	    (_thr_sp(2) <= -_lim_thr_max && vel_error(2) <= 0.f)) {
-		vel_error(2) = 0.f;
+	// ============ 垂直方向 Anti-Windup（冻结误差，抑制积分继续增长）============
+	// 背景：若推力在 z 方向已饱和到上下界，而 vel_error(2) 仍在“推动”积分朝同一方向继续增大，
+	// 则会造成严重 windup（积分越积越大、脱离饱和后需要长时间回退）。
+	// 处理：当 z 向推力触界且误差同向时，将 z 向误差置零，不再喂给积分器。
+	if ((_thr_sp(2) >= -_lim_thr_min && vel_error(2) >= 0.f) ||   // 已达上界（注意：NED向上推力为负），误差还想再“向上”推
+	    (_thr_sp(2) <= -_lim_thr_max && vel_error(2) <= 0.f)) {   // 已达下界，误差还想再“向下”推
+		vel_error(2) = 0.f;  // 冻结 z 轴误差，抑制积分增长
 	}
 
-	// -------- 垂直优先 / 水平保留裕度 --------
-	const Vector2f thrust_sp_xy(_thr_sp);           // 当前推力的水平分量
+	// ============ 推力分配策略：垂直优先 / 水平保留裕度 ============
+	// 目的：确保在推力矢量受总幅值限制时，优先满足垂直（高度/爬升率）需求，
+	// 同时为水平控制保留一定可用推力的“安全边际”（_lim_thr_xy_margin）。
+	const Vector2f thrust_sp_xy(_thr_sp);           // 当前推力的水平分量（从 _thr_sp 取 x/y）
 	const float thrust_sp_xy_norm = thrust_sp_xy.norm();
-	const float thrust_max_squared = math::sq(_lim_thr_max);
+	const float thrust_max_squared = math::sq(_lim_thr_max); // 总推力上限的平方（避免反复开方）
 
-	// 预留给水平控制的裕度（取最小值：当前水平需求 vs 预留上限）
+	// 预留给水平控制的裕度：在“当前水平需求”和“设定的水平上限 margin”之间取较小值
+	// 解释：如果当前水平需求已经很小，就按真实需求预留；若很大，则最多只保留 margin，避免过度挤占垂直通道。
 	const float allocated_horizontal_thrust = math::min(thrust_sp_xy_norm, _lim_thr_xy_margin);
+
+	// 在总推力上限下，扣除保留给水平的这部分，得到 z 分量可用的最大幅值（平方域）
 	const float thrust_z_max_squared = thrust_max_squared - math::sq(allocated_horizontal_thrust);
 
-	// 依据预留的水平裕度，饱和可用的最大向下推力（NED：z 负向为上，故这里为负号）
+	// 用上述 z 可用幅值上限，约束 z 向推力（NED 中“向上”为负值，故取负根界限）
+	// 意图：避免 z 向被水平分量“挤”得不够用。这里是“先保证 z”，再看还能给水平留多少。
 	_thr_sp(2) = math::max(_thr_sp(2), -sqrtf(thrust_z_max_squared));
 
-	// 在优先保证 z 推力后，反算剩余可用于水平的推力上限
+	// 反算：在确定了 z 分量之后，总推力剩余可用于水平分量的上限（圆盘投影半径）
 	const float thrust_max_xy_squared = thrust_max_squared - math::sq(_thr_sp(2));
 	float thrust_max_xy = 0.f;
 	if (thrust_max_xy_squared > 0.f) {
 		thrust_max_xy = sqrtf(thrust_max_xy_squared);
 	}
 
-	// 水平推力饱和（按比例缩放至可用圆盘）
+	// 若当前水平推力需求超出剩余的可用上限，则按比例缩放到该圆盘边界
+	// 等价于把 (thr_x, thr_y) 投影/收缩到半径 = thrust_max_xy 的圆内
 	if (thrust_sp_xy_norm > thrust_max_xy) {
 		_thr_sp.xy() = thrust_sp_xy / thrust_sp_xy_norm * thrust_max_xy;
 	}
 
-	// -------- 跟踪型 Anti-Windup（水平）--------
-	// 当输出因饱和无法达到期望加速度时，利用 ARW 纠正 vel_error，避免积分继续将输出推向饱和边界。
-	// 参考：Anti-Reset Windup for PID controllers, L. Rundqwist, 1990
+	// ============ 水平通道的 ARW（Anti-Reset Windup, 跟踪型）============
+	// 背景：当输出因饱和无法达到期望加速度时，若仍按原误差积分，I 项会推着输出“顶在饱和边”越积越大；
+	// 处理：使用跟踪型 ARW，将“产生的实际加速度”与“期望加速度”之差反馈到误差中，抵消积分的过度增长。
+	// 映射关系：thr -> acc 近似用 acc = thr * (g / hover_thrust)
 	const Vector2f acc_sp_xy_produced = Vector2f(_thr_sp) * (CONSTANTS_ONE_G / _hover_thrust);
 
-	// 仅在信号被饱和时启动 ARW 校正（期望加速度的模方 > 实际可产生的加速度模方）
+	// 仅在“期望加速度模方 > 输出可产生的加速度模方”且存在饱和迹象时启动 ARW
 	if (_acc_sp.xy().norm_squared() > acc_sp_xy_produced.norm_squared()) {
-		const float arw_gain = 2.f / _gain_vel_p(0); // 简化实现：与 Kp 成反比
+		// arw_gain 简化选型：与 Kp 成反比（Kp 大时，本身对误差响应强，ARW 可弱；Kp 小时反之）
+		const float arw_gain = 2.f / _gain_vel_p(0);  // 这里用 x 轴 Kp 代表水平；可按需要改为分量化
 		const Vector2f acc_sp_xy = _acc_sp.xy();
+
+		// 将 (acc_sp - acc_produced) 的差值按 arw_gain 回灌到速度误差，削弱“无法实现的那部分需求”对积分的推动
+		// 注意：回灌到 vel_error（而非直接改 I），便于后续统一用 I += e*Ki*dt 更新，思路更清晰
 		vel_error.xy() = Vector2f(vel_error) - arw_gain * (acc_sp_xy - acc_sp_xy_produced);
 	}
 
-	// 防止积分项出现 NaN：若误差出现 NaN，置零
+	// ---------- 5) NaN 防护 ----------
+	// 若误差因上游处理出现 NaN，这里置零，避免把 NaN 扩散到积分器与推力映射。
 	ControlMath::setZeroIfNanVector3f(vel_error);
 
-	// 积分更新（I = I + Ki * e * dt）
+	// ---------- 6) 积分更新 ----------
+	// 标准离散积分：I(k+1) = I(k) + Ki * e(k) * dt
+	// 说明：
+	//  - z 轴的 e(2) 可能已被 AWU 冻结为 0（上一段），从而抑制 windup；
+	//  - 水平轴的 e(0/1) 可能已被 ARW 调整，以减轻“无法实现的加速度”导致的 windup。
 	_vel_int += vel_error.emult(_gain_vel_i) * dt;
 }
 
+
 //========================== 加速度→推力/姿态 ==========================//
 
+// 将期望加速度 _acc_sp（世界系/NED）映射为期望推力向量 _thr_sp（沿机体z轴）并施加倾角/推力限幅。
+// 约定：NED坐标（x前、y右、z向下）；“向上”为 z 负方向。_hover_thrust 为抵消 1g 时的归一化推力。
 void PositionControl::_accelerationControl()
 {
-	// 1) 设定特定力（specific force）在 z 轴上的基线：默认仅 -g，用于姿态解算；
-	//    若不解耦，则叠加期望 z 加速度，提高水平加速度跟踪精度。
-	float z_specific_force = -CONSTANTS_ONE_G; // NED 中，重力方向为 +z，特定力取反
+	// --- 1) 构造 z 轴“特定力”基线，用于姿态解算（决定 body_z 朝向） ---
+	// specific force = 加速度计测量 - 重力。在 NED 中重力沿 +z，因此对姿态估计使用的“特定力”基线取 -g（指向上）。
+	// 若未解耦（_decouple_horizontal_and_vertical_acceleration == false），
+	//    则把期望 z 加速度也叠加进来，有助于 body_z 更贴近“总合加速度”的反方向，提高水平加速度跟踪。
+	float z_specific_force = -CONSTANTS_ONE_G; // [m/s^2] 取负表示“向上”
 	if (!_decouple_horizontal_and_vertical_acceleration) {
+		// 注意：_acc_sp(2) 在 NED 中“向上”为负值；例如想强力上升，_acc_sp(2) 更负，使 z_specific_force 更“向上”。
 		z_specific_force += _acc_sp(2);
 	}
 
-	// 2) 期望机体 z 轴方向（body_z）：与期望加速度相反方向（推力方向），并单位化
+	// --- 2) 期望机体 z 轴方向 body_z ---
+	// 物理解读：推力方向与需要的“合加速度”相反（推力用于产生期望加速度并抵消重力），
+	// 因此用 (-ax, -ay, -z_specific_force)，再单位化得到机体 z 轴朝向（在世界系表达）。
 	Vector3f body_z = Vector3f(-_acc_sp(0), -_acc_sp(1), -z_specific_force).normalized();
 
-	// 3) 倾角限制：将 body_z 限制在与世界 z 轴的锥面内（最大倾角 _lim_tilt）
+	// --- 3) 倾角限制（最大倾角 _lim_tilt） ---
+	// 将 body_z 限制在以世界 z 轴为锥轴、开角为 _lim_tilt 的圆锥内，避免过大俯仰/横滚。
+	// 影响：限制水平可用加速度（倾角越小，水平分量越小）；防止 cos 过小导致推力投影爆增。
 	ControlMath::limitTilt(body_z, Vector3f(0, 0, 1), _lim_tilt);
 
-	// 4) 将期望加速度映射为推力：假设“悬停推力 = 对抗 1g 的推力”
+	// --- 4) 将期望 z 向加速度映射为 NED z 向推力（标量） ---
+	// 线性近似：若 hover_thrust 抵消 1g，则期望 z 加速度 a_z 需要的附加推力 ~ a_z * (hover_thrust/g)。
+	// 在 NED 中，“向上推力”为负值（因为推力沿 body_z，且 body_z 与世界 z 夹角小于90°时，z 分量为负）。
+	// 推导：thrust_ned_z = a_z * (hover_thrust / g) - hover_thrust
+	// 若 a_z = 0（只想维持高度），则 thrust_ned_z = -hover_thrust（大小等于悬停推力、方向“向上”）。
 	const float thrust_ned_z = _acc_sp(2) * (_hover_thrust / CONSTANTS_ONE_G) - _hover_thrust;
 
-	// 5) 将推力投影到计划的机体姿态上：collective_thrust = Tz / cos(theta)
-	const float cos_ned_body = (Vector3f(0, 0, 1).dot(body_z));
+	// --- 5) 姿态投影与集体推力（collective_thrust） ---
+	// 为了实现上述 z 向推力分量 thrust_ned_z，在给定姿态 body_z 下，总推力 T 应满足：
+	//   thrust_ned_z = T * (e_z^T * body_z) = T * cos(theta)
+	// 其中 e_z = (0,0,1) 是世界 z 轴，cos(theta) = dot(e_z, body_z)。
+	// 因此：T = thrust_ned_z / cos(theta)。
+	// 同时施加下限：T 不能小于 -_lim_thr_min（注意负号；NED中“向上”为负），防止桨叶完全卸载等。
+	const float cos_ned_body = (Vector3f(0, 0, 1).dot(body_z)); // = cos(theta)，theta 为机体z与世界z的夹角
+	// 注意：cos_ned_body ∈ (0,1]，受 _lim_tilt 限制不应接近0；若接近0会放大T（危险）。
 	const float collective_thrust = math::min(thrust_ned_z / cos_ned_body, -_lim_thr_min);
 
-	// 6) 最终推力向量：沿 body_z 方向分配总推力
+	// --- 6) 生成最终推力向量 ---
+	// 推力方向沿 body_z，大小为 collective_thrust（通常为负，表示“向上”）。
+	// 该 _thr_sp 将用于后续推力分配/混控（再结合总幅值上限、水平/垂直分配策略等）。
 	_thr_sp = body_z * collective_thrust;
 }
 
