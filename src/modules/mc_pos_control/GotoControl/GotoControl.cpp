@@ -45,15 +45,29 @@ using namespace time_literals;
 
 bool GotoControl::checkForSetpoint(const hrt_abstime &now, const bool enabled)
 {
+	// 1) 更新订阅：尝试从 uORB 拉取最新的 goto_setpoint 消息
 	_goto_setpoint_sub.update();
+
+	// 2) 判断是否有初始化过（消息是否曾经发布过）
 	const bool timestamp_initialized = _goto_setpoint_sub.get().timestamp != 0;
+
+	// 3) 判断消息是否超时
+	//    这里要求消息时间戳 + 500ms > 当前时间
+	//    即 setpoint 在 500 毫秒之内更新过，认为仍然有效
 	const bool no_timeout = now < (_goto_setpoint_sub.get().timestamp + 500_ms);
+
+	// 4) 需要运行的条件：
+	//    a) 消息曾经初始化过
+	//    b) 消息没有过期
+	//    c) 外部控制逻辑允许 (enabled = true)
 	const bool need_to_run = timestamp_initialized && no_timeout && enabled;
 
+	// 5) 如果条件不满足，说明不能运行 goto 控制，重置内部初始化标志
 	if (!need_to_run) {
 		_is_initialized = false;
 	}
 
+	// 6) 返回是否需要运行 Goto 控制
 	return need_to_run;
 }
 

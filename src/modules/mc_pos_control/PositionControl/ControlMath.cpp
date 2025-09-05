@@ -67,115 +67,130 @@ void limitTilt(Vector3f &body_unit, const Vector3f &world_unit, const float max_
 	body_unit = cosf(angle) * world_unit + sinf(angle) * rejection.unit();
 }
 
+// 根据期望的机体 z 轴方向（body_z，世界系表达）与期望偏航角 yaw_sp，
+// 生成完整的姿态设定（四元数）到 att_sp。
+// 约定：x 前、y 右、z 下（NED）；旋转矩阵 R_sp 的列向量依次为机体系 {x_b, y_b, z_b} 在世界系中的表达。
 void bodyzToAttitude(Vector3f body_z, const float yaw_sp, vehicle_attitude_setpoint_s &att_sp)
 {
-	// zero vector, no direction, set safe level value
-	if (body_z.norm_squared() < FLT_EPSILON) {
-		body_z(2) = 1.f;
-	}
+    // --- 1) 零向量保护 ---
+    // 若传入的 body_z 几乎为零向量，则没有方向意义；设为安全的朝上/朝下基准。
+    // 这里将 z 分量设为 1（NED 下 +z 为向下，这里仅用于避免零向量；紧接着会归一化）。
+    if (body_z.norm_squared() < FLT_EPSILON) {
+        body_z(2) = 1.f;
+    }
 
-	body_z.normalize();
+    // 统一成单位向量，便于后续正交基构造
+    body_z.normalize();
 
-	// vector of desired yaw direction in XY plane, rotated by PI/2
-	const Vector3f y_C{-sinf(yaw_sp), cosf(yaw_sp), 0.f};
+    // --- 2) 由偏航角 yaw_sp 构造 XY 平面上的参考方向 y_C ---
+    // y_C 是期望偏航的“切向方向”，为 ( -sin(yaw), cos(yaw), 0 )。
+    // 直觉：世界系里，以 yaw_sp 指向的“朝前”方向为 x_yaw = [cos, sin, 0]，
+    // 与其正交的 y_C = Rz(90°)*x_yaw = [-sin, cos, 0]。
+    const Vector3f y_C{-sinf(yaw_sp), cosf(yaw_sp), 0.f};
 
-	// desired body_x axis, orthogonal to body_z
-	Vector3f body_x = y_C % body_z;
+    // --- 3) 用叉积构造机体 x 轴：x_b = y_C × z_b ---
+    // 这样保证 x_b ⟂ z_b 且 x_b 在 yaw 参考平面（受 y_C 引导）。
+    // 注意：此处的“×”是右手法则；PX4 中 Vector3f 的 '%' 运算符即为叉积。
+    Vector3f body_x = y_C % body_z;
 
-	// keep nose to front while inverted upside down
-	if (body_z(2) < 0.f) {
-		body_x = -body_x;
-	}
+    // --- 4) 倒飞一致性处理（保持机头朝前）---
+    // 若 z_b 的 z 分量 < 0，说明机体 z 轴朝“上”（NED 负向），即倒飞状态。
+    // 为避免倒飞时机头朝向反转（保持 nose-to-front），将 x_b 取反。
+    if (body_z(2) < 0.f) {
+        body_x = -body_x;
+    }
 
-	if (fabsf(body_z(2)) < 0.000001f) {
-		// desired thrust is in XY plane, set X downside to construct correct matrix,
-		// but yaw component will not be used actually
-		body_x.zero();
-		body_x(2) = 1.f;
-	}
+    // --- 5) 特殊情况：推力完全在水平面（z_b 与世界 z 正交）---
+    // 若 |z_b.z| 很小（接近 0），意味着期望推力方向恰在 XY 面上，
+    // 这时仅凭 y_C 与 z_b 可能导致 x_b 退化（长度≈0）。为构造一个有效的正交基，
+    // 临时将 x_b 设为 (0,0,1)（朝下），后续 yaw 分量实际不会被使用（因为 thrust 在水平面）。
+    if (fabsf(body_z(2)) < 0.000001f) {
+        body_x.zero();
+        body_x(2) = 1.f;
+    }
 
-	body_x.normalize();
+    // 归一化 x_b，确保正交基数值稳定
+    body_x.normalize();
 
-	// desired body_y axis
-	const Vector3f body_y = body_z % body_x;
+    // --- 6) 用叉积得到机体 y 轴：y_b = z_b × x_b ---
+    // 这样可保证 {x_b, y_b, z_b} 构成右手正交基（x×y=z）。
+    const Vector3f body_y = body_z % body_x;
 
-	Dcmf R_sp;
+    // --- 7) 用列向量方式填充期望旋转矩阵 R_sp = [x_b | y_b | z_b] ---
+    Dcmf R_sp;
+    for (int i = 0; i < 3; i++) {
+        R_sp(i, 0) = body_x(i);
+        R_sp(i, 1) = body_y(i);
+        R_sp(i, 2) = body_z(i);
+    }
 
-	// fill rotation matrix
-	for (int i = 0; i < 3; i++) {
-		R_sp(i, 0) = body_x(i);
-		R_sp(i, 1) = body_y(i);
-		R_sp(i, 2) = body_z(i);
-	}
-
-	// copy quaternion setpoint to attitude setpoint topic
-	const Quatf q_sp{R_sp};
-	q_sp.copyTo(att_sp.q_d);
+    // --- 8) 将旋转矩阵转换成四元数，并写入姿态设定 ---
+    const Quatf q_sp{R_sp};
+    q_sp.copyTo(att_sp.q_d);
 }
 
+
+// 在二维平面（XY）上约束向量和 v0 + v1 的幅值不超过 max。
+// 设计目标：优先保留 v0（位置误差产生的“优先量”），只在必要时缩放 v1（叠加/前馈量）。
 Vector2f constrainXY(const Vector2f &v0, const Vector2f &v1, const float &max)
 {
+    // 情况 1：直接相加不超限，返回原和向量
+    // 几何含义：||v0 + v1|| <= max，无需约束
 	if (Vector2f(v0 + v1).norm() <= max) {
-		// vector does not exceed maximum magnitude
+		// 向量未超过最大模长
 		return v0 + v1;
 
+	// 情况 2：v0 本身就已达到/超过上限
+	// 策略：按 v0 的方向限幅到 max（体现“v0 优先”策略）
 	} else if (v0.length() >= max) {
-		// the magnitude along v0, which has priority, already exceeds maximum.
+		// v0 的模长已超过 max，直接把 v0 限幅
 		return v0.normalized() * max;
 
+	// 情况 3：v0 与 v1 近似相等（大小与方向都非常接近）
+	// 在“已超限”的前提下，只能沿 v0 方向把结果限到 max
 	} else if (fabsf(Vector2f(v1 - v0).norm()) < 0.001f) {
-		// the two vectors are equal
+		// 两个向量几乎相同（阈值 0.001）
 		return v0.normalized() * max;
 
+	// 情况 4：v0 近似为零向量
+	// 策略：此时无“优先量”，仅沿 v1 的方向限幅到 max
 	} else if (v0.length() < 0.001f) {
-		// the first vector is 0.
+		// v0 ≈ 0，则仅用 v1 的方向与模长上限
 		return v1.normalized() * max;
 
+	// 情况 5：一般情况（v0 未超限、v0 非零、v0 与 v1 不相等，且 v0+v1 会超限）
+	// 思路：保持 v0 不变，只沿 v1 的方向加一个可调标量 s，使得 ||v0 + s*u1|| = max
+	//      其中 u1 = v1/||v1|| 为 v1 的单位方向
 	} else {
-		// vf = final vector with ||vf|| <= max
-		// s = scaling factor
-		// u1 = unit of v1
-		// vf = v0 + v1 = v0 + s * u1
-		// constraint: ||vf|| <= max
-		//
-		// solve for s: ||vf|| = ||v0 + s * u1|| <= max
-		//
-		// Derivation:
-		// For simplicity, replace v0 -> v, u1 -> u
-		// 				   		   v0(0/1/2) -> v0/1/2
-		// 				   		   u1(0/1/2) -> u0/1/2
-		//
-		// ||v + s * u||^2 = (v0+s*u0)^2+(v1+s*u1)^2+(v2+s*u2)^2 = max^2
-		// v0^2+2*s*u0*v0+s^2*u0^2 + v1^2+2*s*u1*v1+s^2*u1^2 + v2^2+2*s*u2*v2+s^2*u2^2 = max^2
-		// s^2*(u0^2+u1^2+u2^2) + s*2*(u0*v0+u1*v1+u2*v2) + (v0^2+v1^2+v2^2-max^2) = 0
-		//
-		// quadratic equation:
-		// -> s^2*a + s*b + c = 0 with solution: s1/2 = (-b +- sqrt(b^2 - 4*a*c))/(2*a)
-		//
-		// b = 2 * u.dot(v)
-		// a = 1 (because u is normalized)
-		// c = (v0^2+v1^2+v2^2-max^2) = -max^2 + ||v||^2
-		//
-		// sqrt(b^2 - 4*a*c) =
-		// 		sqrt(4*u.dot(v)^2 - 4*(||v||^2 - max^2)) = 2*sqrt(u.dot(v)^2 +- (||v||^2 -max^2))
-		//
-		// s1/2 = ( -2*u.dot(v) +- 2*sqrt(u.dot(v)^2 - (||v||^2 -max^2)) / 2
-		//      =  -u.dot(v) +- sqrt(u.dot(v)^2 - (||v||^2 -max^2))
-		// m = u.dot(v)
-		// s = -m + sqrt(m^2 - c)
-		//
-		//
-		//
-		// notes:
-		// 	- s (=scaling factor) needs to be positive
-		// 	- (max - ||v||) always larger than zero, otherwise it never entered this if-statement
-		Vector2f u1 = v1.normalized();
-		float m = u1.dot(v0);
-		float c = v0.dot(v0) - max * max;
+		// 变量含义：
+		// vf = 最终输出向量，要求 ||vf|| <= max
+		// s  = 沿 u1（v1 的单位方向）叠加的缩放系数，期望 s >= 0
+		// u1 = v1 的单位向量
+		// 关系：vf = v0 + v1 = v0 + s * u1
+		// 约束：||vf|| <= max；在此分支实际通过解方程令 ||vf|| = max
+
+		// 解法：令 u = u1, v = v0，目标：||v + s*u|| = max
+		// 展开平方：||v + s*u||^2 = (v + s*u)·(v + s*u)
+		//                             = ||v||^2 + 2s(u·v) + s^2||u||^2
+		// 因为 u 是单位向量：||u||=1
+		// 得：s^2 + 2(u·v)s + (||v||^2 - max^2) = 0
+		// 记：m = u·v，c = ||v||^2 - max^2
+		// 二次方程：s^2 + 2m s + c = 0
+		// 判别式：Δ = (2m)^2 - 4*1*c = 4(m^2 - c)
+		// 取“非负根”（只加不减）：s = -m + sqrt(m^2 - c)
+
+		Vector2f u1 = v1.normalized(); // v1 的单位方向
+		float m = u1.dot(v0);          // m = u·v = u1·v0，v0 在 u1 方向的投影
+		float c = v0.dot(v0) - max * max; // c = ||v0||^2 - max^2
+
+		// 解析解：选择 s = -m + sqrt(m^2 - c)（非负且使 ||v0 + s*u1|| = max）
 		float s = -m + sqrtf(m * m - c);
+
+		// 返回叠加后的结果：在 u1 方向加 s，使得最终落在半径为 max 的圆周上
 		return v0 + u1 * s;
 	}
 }
+
 
 bool cross_sphere_line(const Vector3f &sphere_c, const float sphere_r,
 		       const Vector3f &line_a, const Vector3f &line_b, Vector3f &res)
