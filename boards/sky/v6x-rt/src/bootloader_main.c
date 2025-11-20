@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2024 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,57 +31,31 @@
  *
  ****************************************************************************/
 
- #include "SCH16T.hpp"
+/**
+ * @file bootloader_main.c
+ *
+ * FMU-specific early startup code for bootloader
+*/
 
- #include <px4_platform_common/module.h>
+#include "board_config.h"
+#include "bl.h"
 
- void SCH16T::print_usage()
- {
-	 PRINT_MODULE_USAGE_NAME("sch16t", "driver");
-	 PRINT_MODULE_USAGE_SUBCATEGORY("imu");
-	 PRINT_MODULE_USAGE_COMMAND("start");
-	 PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(false, true);
-	 PRINT_MODULE_USAGE_PARAM_INT('R', 0, 0, 35, "Rotation", true);
-	 PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
- }
+#include <nuttx/config.h>
+#include <nuttx/board.h>
+#include <chip.h>
+#include <arch/board/board.h>
+#include "arm_internal.h"
+#include <px4_platform_common/init.h>
 
- extern "C" int sch16t_main(int argc, char *argv[])
- {
-	 int ch;
-	 using ThisDriver = SCH16T;
-	 BusCLIArguments cli{false, true};
-	 cli.default_spi_frequency = 1000000;  // 1MHz - SCH16T SafeSPI requires lower clock speed
-	 cli.spi_mode = SPIDEV_MODE0;
+extern int sercon_main(int c, char **argv);
 
-	 while ((ch = cli.getOpt(argc, argv, "R:")) != EOF) {
-		 switch (ch) {
-		 case 'R':
-			 cli.rotation = (enum Rotation)atoi(cli.optArg());
-			 break;
-		 }
-	 }
+void board_late_initialize(void)
+{
+	sercon_main(0, NULL);
+}
 
-	 const char *verb = cli.optArg();
-
-	 if (!verb) {
-		 ThisDriver::print_usage();
-		 return -1;
-	 }
-
-	 BusInstanceIterator iterator(MODULE_NAME, cli, DRV_IMU_DEVTYPE_SCH16T);
-
-	 if (!strcmp(verb, "start")) {
-		 return ThisDriver::module_start(cli, iterator);
-	 }
-
-	 if (!strcmp(verb, "stop")) {
-		 return ThisDriver::module_stop(iterator);
-	 }
-
-	 if (!strcmp(verb, "status")) {
-		 return ThisDriver::module_status(iterator);
-	 }
-
-	 ThisDriver::print_usage();
-	 return -1;
- }
+extern void sys_tick_handler(void);
+void board_timerhook(void)
+{
+	sys_tick_handler();
+}

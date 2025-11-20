@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2024 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2016, 2018 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,57 +31,85 @@
  *
  ****************************************************************************/
 
- #include "SCH16T.hpp"
+/**
+ * @file led.c
+ *
+ * PX4 fmu-v6rt LED backend.
+ */
 
- #include <px4_platform_common/module.h>
+#include <px4_platform_common/px4_config.h>
 
- void SCH16T::print_usage()
- {
-	 PRINT_MODULE_USAGE_NAME("sch16t", "driver");
-	 PRINT_MODULE_USAGE_SUBCATEGORY("imu");
-	 PRINT_MODULE_USAGE_COMMAND("start");
-	 PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(false, true);
-	 PRINT_MODULE_USAGE_PARAM_INT('R', 0, 0, 35, "Rotation", true);
-	 PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
- }
+#include <stdbool.h>
 
- extern "C" int sch16t_main(int argc, char *argv[])
- {
-	 int ch;
-	 using ThisDriver = SCH16T;
-	 BusCLIArguments cli{false, true};
-	 cli.default_spi_frequency = 1000000;  // 1MHz - SCH16T SafeSPI requires lower clock speed
-	 cli.spi_mode = SPIDEV_MODE0;
+#include "chip.h"
+#include <hardware/imxrt_gpio.h>
+#include "board_config.h"
 
-	 while ((ch = cli.getOpt(argc, argv, "R:")) != EOF) {
-		 switch (ch) {
-		 case 'R':
-			 cli.rotation = (enum Rotation)atoi(cli.optArg());
-			 break;
-		 }
-	 }
+#include <arch/board/board.h>
 
-	 const char *verb = cli.optArg();
+/*
+ * Ideally we'd be able to get these from arm_internal.h,
+ * but since we want to be able to disable the NuttX use
+ * of leds for system indication at will and there is no
+ * separate switch, we need to build independent of the
+ * CONFIG_ARCH_LEDS configuration switch.
+ */
+__BEGIN_DECLS
+extern void led_init(void);
+extern void led_on(int led);
+extern void led_off(int led);
+extern void led_toggle(int led);
+__END_DECLS
 
-	 if (!verb) {
-		 ThisDriver::print_usage();
-		 return -1;
-	 }
 
-	 BusInstanceIterator iterator(MODULE_NAME, cli, DRV_IMU_DEVTYPE_SCH16T);
+static uint32_t g_ledmap[] = {
+	GPIO_nLED_BLUE,   // Indexed by LED_BLUE
+	GPIO_nLED_RED,    // Indexed by LED_RED, LED_AMBER
+	GPIO_LED_SAFETY,  // Indexed by LED_SAFETY
+	GPIO_nLED_GREEN,  // Indexed by LED_GREEN
+};
 
-	 if (!strcmp(verb, "start")) {
-		 return ThisDriver::module_start(cli, iterator);
-	 }
+__EXPORT void led_init(void)
+{
+	/* Configure LED GPIOs for output */
+	for (size_t l = 0; l < (sizeof(g_ledmap) / sizeof(g_ledmap[0])); l++) {
+		if (g_ledmap[l] != 0) {
+			imxrt_config_gpio(g_ledmap[l]);
+		}
+	}
+}
 
-	 if (!strcmp(verb, "stop")) {
-		 return ThisDriver::module_stop(iterator);
-	 }
+static void phy_set_led(int led, bool state)
+{
+	/* Drive Low to switch on */
 
-	 if (!strcmp(verb, "status")) {
-		 return ThisDriver::module_status(iterator);
-	 }
+	if (g_ledmap[led] != 0) {
+		imxrt_gpio_write(g_ledmap[led], !state);
+	}
+}
 
-	 ThisDriver::print_usage();
-	 return -1;
- }
+static bool phy_get_led(int led)
+{
+
+	if (g_ledmap[led] != 0) {
+		return imxrt_gpio_read(!g_ledmap[led]);
+	}
+
+	return false;
+}
+
+__EXPORT void led_on(int led)
+{
+	phy_set_led(led, true);
+}
+
+__EXPORT void led_off(int led)
+{
+	phy_set_led(led, false);
+}
+
+__EXPORT void led_toggle(int led)
+{
+
+	phy_set_led(led, !phy_get_led(led));
+}

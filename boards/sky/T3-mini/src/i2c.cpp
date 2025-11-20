@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2024 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2020 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,57 +31,11 @@
  *
  ****************************************************************************/
 
- #include "SCH16T.hpp"
+#include <px4_arch/i2c_hw_description.h>
 
- #include <px4_platform_common/module.h>
-
- void SCH16T::print_usage()
- {
-	 PRINT_MODULE_USAGE_NAME("sch16t", "driver");
-	 PRINT_MODULE_USAGE_SUBCATEGORY("imu");
-	 PRINT_MODULE_USAGE_COMMAND("start");
-	 PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(false, true);
-	 PRINT_MODULE_USAGE_PARAM_INT('R', 0, 0, 35, "Rotation", true);
-	 PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
- }
-
- extern "C" int sch16t_main(int argc, char *argv[])
- {
-	 int ch;
-	 using ThisDriver = SCH16T;
-	 BusCLIArguments cli{false, true};
-	 cli.default_spi_frequency = 1000000;  // 1MHz - SCH16T SafeSPI requires lower clock speed
-	 cli.spi_mode = SPIDEV_MODE0;
-
-	 while ((ch = cli.getOpt(argc, argv, "R:")) != EOF) {
-		 switch (ch) {
-		 case 'R':
-			 cli.rotation = (enum Rotation)atoi(cli.optArg());
-			 break;
-		 }
-	 }
-
-	 const char *verb = cli.optArg();
-
-	 if (!verb) {
-		 ThisDriver::print_usage();
-		 return -1;
-	 }
-
-	 BusInstanceIterator iterator(MODULE_NAME, cli, DRV_IMU_DEVTYPE_SCH16T);
-
-	 if (!strcmp(verb, "start")) {
-		 return ThisDriver::module_start(cli, iterator);
-	 }
-
-	 if (!strcmp(verb, "stop")) {
-		 return ThisDriver::module_stop(iterator);
-	 }
-
-	 if (!strcmp(verb, "status")) {
-		 return ThisDriver::module_status(iterator);
-	 }
-
-	 ThisDriver::print_usage();
-	 return -1;
- }
+constexpr px4_i2c_bus_t px4_i2c_buses[I2C_BUS_MAX_BUS_ITEMS] = {
+	initI2CBusExternal(1),
+	initI2CBusExternal(2),
+	initI2CBusExternal(3),
+	initI2CBusInternal(4),
+};

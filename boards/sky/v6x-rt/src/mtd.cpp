@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,35 +36,35 @@
 
 #include <nuttx/spi/spi.h>
 #include <px4_platform_common/px4_manifest.h>
-//                                                              KiB BS    nB
-static const px4_mft_device_t spi5 = {             // FM25V02A on FMUM native: 32K X 8, emulated as (1024 Blocks of 32)
-	.bus_type = px4_mft_device_t::SPI,
-	.devid    = SPIDEV_FLASH(0)
+
+static const px4_mft_device_t qspi_flash = {        // FM25V02A on FMUM 32K 512 X 64
+	.bus_type = px4_mft_device_t::FLEXSPI,             // Using Flex SPI
 };
-static const px4_mft_device_t i2c3 = {             // 24LC64T on Base  8K 32 X 256
+//                                                              KiB BS    nB
+static const px4_mft_device_t i2c3 = {             // 24LC64T on IMU  8K 32 X 256
 	.bus_type = px4_mft_device_t::I2C,
 	.devid    = PX4_MK_I2C_DEVID(3, 0x50)
 };
-static const px4_mft_device_t i2c4 = {             // 24LC64T on IMU   8K 32 X 256
+static const px4_mft_device_t i2c6 = {             // 24LC64T on BASE  8K 32 X 256
 	.bus_type =  px4_mft_device_t::I2C,
-	.devid    =  PX4_MK_I2C_DEVID(4, 0x50)
+	.devid    =  PX4_MK_I2C_DEVID(6, 0x51)
 };
 
 
 static const px4_mtd_entry_t fmum_fram = {
-	.device = &spi5,
+	.device = &qspi_flash,
 	.npart = 1,
 	.partd = {
 		{
 			.type = MTD_PARAMETERS,
 			.path = "/fs/mtd_params",
-			.nblocks = (32768 / (1 << CONFIG_RAMTRON_EMULATE_SECTOR_SHIFT))
+			.nblocks = 256
 		}
 	},
 };
 
 static const px4_mtd_entry_t base_eeprom = {
-	.device = &i2c3,
+	.device = &i2c6,
 	.npart = 2,
 	.partd = {
 		{
@@ -82,7 +82,7 @@ static const px4_mtd_entry_t base_eeprom = {
 };
 
 static const px4_mtd_entry_t imu_eeprom = {
-	.device = &i2c4,
+	.device = &i2c3,
 	.npart = 3,
 	.partd = {
 		{
@@ -117,16 +117,10 @@ static const px4_mft_entry_s mtd_mft = {
 	.pmft = (void *) &board_mtd_config,
 };
 
-static const px4_mft_entry_s mft_mft = {
-	.type = MFT,
-	.pmft = (void *) system_query_manifest,
-};
-
 static const px4_mft_s mft = {
-	.nmft = 2,
+	.nmft = 1,
 	.mfts = {
 		&mtd_mft,
-		&mft_mft,
 	}
 };
 

@@ -44,7 +44,7 @@
 constexpr px4_spi_bus_all_hw_t px4_spi_buses_all_hw[BOARD_NUM_SPI_CFG_HW_VERSIONS] = {
 	initSPIFmumID(V6XRT_0, {
 		initSPIBus(SPI::Bus::LPSPI1, {
-			initSPIDevice(DRV_IMU_DEVTYPE_ICM42686P, SPI::CS{GPIO::Port2, GPIO::Pin11}, SPI::DRDY{GPIO::Port3, GPIO::Pin19}), /* GPIO_EMC_B2_01 GPIO2_IO11, GPIO_AD_20, GPIO3_IO19 */
+			initSPIDevice(DRV_IMU_DEVTYPE_ICM45686, SPI::CS{GPIO::Port2, GPIO::Pin11}, SPI::DRDY{GPIO::Port3, GPIO::Pin19}), /* GPIO_EMC_B2_01 GPIO2_IO11, GPIO_AD_20, GPIO3_IO19 */
 		}, {GPIO::Port2, GPIO::Pin1}), // Power GPIO_EMC_B1_33  GPIO2_IO01
 
 		initSPIBus(SPI::Bus::LPSPI2, {
@@ -64,7 +64,7 @@ constexpr px4_spi_bus_all_hw_t px4_spi_buses_all_hw[BOARD_NUM_SPI_CFG_HW_VERSION
 
 	initSPIFmumID(V6XRT_1, {
 		initSPIBus(SPI::Bus::LPSPI1, {
-			initSPIDevice(DRV_IMU_DEVTYPE_ICM42686P, SPI::CS{GPIO::Port2, GPIO::Pin11}, SPI::DRDY{GPIO::Port3, GPIO::Pin19}), /* GPIO_EMC_B2_01 GPIO2_IO11, GPIO_AD_20, GPIO3_IO19 */
+			initSPIDevice(DRV_IMU_DEVTYPE_ICM45686, SPI::CS{GPIO::Port2, GPIO::Pin11}, SPI::DRDY{GPIO::Port3, GPIO::Pin19}), /* GPIO_EMC_B2_01 GPIO2_IO11, GPIO_AD_20, GPIO3_IO19 */
 		}, {GPIO::Port2, GPIO::Pin1}), // Power GPIO_EMC_B1_33  GPIO2_IO01
 
 		initSPIBus(SPI::Bus::LPSPI2, {

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2024 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,57 +31,38 @@
  *
  ****************************************************************************/
 
- #include "SCH16T.hpp"
+/**
+ * @file hw_rev_ver.c
+ *
+ * Sky T3-mini hardware version and revision detection.
+ *
+ */
 
- #include <px4_platform_common/module.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform/board_determine_hw_info.h>
 
- void SCH16T::print_usage()
- {
-	 PRINT_MODULE_USAGE_NAME("sch16t", "driver");
-	 PRINT_MODULE_USAGE_SUBCATEGORY("imu");
-	 PRINT_MODULE_USAGE_COMMAND("start");
-	 PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(false, true);
-	 PRINT_MODULE_USAGE_PARAM_INT('R', 0, 0, 35, "Rotation", true);
-	 PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
- }
+#include <stdbool.h>
 
- extern "C" int sch16t_main(int argc, char *argv[])
- {
-	 int ch;
-	 using ThisDriver = SCH16T;
-	 BusCLIArguments cli{false, true};
-	 cli.default_spi_frequency = 1000000;  // 1MHz - SCH16T SafeSPI requires lower clock speed
-	 cli.spi_mode = SPIDEV_MODE0;
+/************************************************************************************
+ * Name: board_determine_hw_info
+ *
+ * Description:
+ *   Simple implementation for Sky T3-mini board.
+ *   Since this board doesn't have hardware revision/version detection pins,
+ *   we return a default configuration.
+ *
+ * Input Parameters:
+ *   None
+ *
+ * Returned Value:
+ *   0 - on success
+ *
+ ************************************************************************************/
 
-	 while ((ch = cli.getOpt(argc, argv, "R:")) != EOF) {
-		 switch (ch) {
-		 case 'R':
-			 cli.rotation = (enum Rotation)atoi(cli.optArg());
-			 break;
-		 }
-	 }
-
-	 const char *verb = cli.optArg();
-
-	 if (!verb) {
-		 ThisDriver::print_usage();
-		 return -1;
-	 }
-
-	 BusInstanceIterator iterator(MODULE_NAME, cli, DRV_IMU_DEVTYPE_SCH16T);
-
-	 if (!strcmp(verb, "start")) {
-		 return ThisDriver::module_start(cli, iterator);
-	 }
-
-	 if (!strcmp(verb, "stop")) {
-		 return ThisDriver::module_stop(iterator);
-	 }
-
-	 if (!strcmp(verb, "status")) {
-		 return ThisDriver::module_status(iterator);
-	 }
-
-	 ThisDriver::print_usage();
-	 return -1;
- }
+int board_determine_hw_info(void)
+{
+	/* For Sky T3-mini, we don't have hardware revision detection,
+	 * so we return success with default values.
+	 */
+	return 0;
+}

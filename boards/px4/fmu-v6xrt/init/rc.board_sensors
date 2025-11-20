@@ -18,7 +18,7 @@
 
 set HAVE_PM2 yes
 set INA_CONFIGURED no
-
+icm45686 -R 12 -b 1 -s start
 if mft query -q -k MFT -s MFT_PM2 -v 0
 then
 	set HAVE_PM2 no
