@@ -117,16 +117,10 @@ static const px4_mft_entry_s mtd_mft = {
 	.pmft = (void *) &board_mtd_config,
 };
 
-static const px4_mft_entry_s mft_mft = {
-	.type = MFT,
-	.pmft = (void *) system_query_manifest,
-};
-
 static const px4_mft_s mft = {
-	.nmft = 2,
+	.nmft = 1,
 	.mfts = {
 		&mtd_mft,
-		&mft_mft,
 	}
 };
 

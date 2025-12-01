@@ -324,8 +324,9 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	// Use the default HW_VER_REV(0x0,0x0) for Ramtron
 
-	// SPI initialization deferred to after I2C init (line 384)
-	// to avoid multiple power cycles on sensor buses
+	// Simple initialization like ZeroOne X6 board
+	// SCH16T will self-initialize on power-up
+	imxrt_spiinitialize();
 
 	/* Configure the HW based on the manifest
 	 * This will use I2C busses so VDD_3V3_SENSORS4_EN

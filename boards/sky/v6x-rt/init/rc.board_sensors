@@ -27,7 +27,7 @@ board_adc start
 #iim42653 -s -b 2 -R 6 start
 
 # SCH16T on SPI3 with DRDY (GPIO_AD_21 GPIO3_IO20)
-# Note: No hardware reset - SCH16T uses software reset only
+# Note: Driver handles power cycling internally for proper initialization
 sch16t -R 0 -s -b 3 start
 
 # Internal magnetometer

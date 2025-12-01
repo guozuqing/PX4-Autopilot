@@ -207,23 +207,7 @@
 /* HW has to large of R termination on ADC todo:change when HW value is chosen */
 #define BOARD_ADC_OPEN_CIRCUIT_V     (5.6f)
 
-/* HW Version and Revision drive signals Default to 1 to detect */
-#define BOARD_HAS_HW_SPLIT_VERSIONING
-
-#define GPIO_HW_VER_REV_DRIVE  /* PG0 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTG|GPIO_PIN0)
-#define GPIO_HW_REV_SENSE      /* PH4 */  GPIO_ADC3_INP15
-#define GPIO_HW_VER_SENSE      /* PH3 */  GPIO_ADC3_INP14
-#define HW_INFO_INIT_PREFIX    "V6X"
-
-#define BOARD_NUM_SPI_CFG_HW_VERSIONS 7
-//                 Base/FMUM
-#define V6X_0     HW_FMUM_ID(0x0)   // FMUV6X, Auterion,HB  Sensor Set Rev 0
-#define V6X_1     HW_FMUM_ID(0x1)   // FMUV6X, CUAV Sensor Set Rev 1
-#define V6X_3     HW_FMUM_ID(0x3)   // FMUV6X, HB              Sensor Set Rev 3
-#define V6X_4     HW_FMUM_ID(0x4)   // FMUV6X, HB              Sensor Set Rev 4
-#define V6X_6     HW_FMUM_ID(0x6)   // FMUV6X, HB              Sensor Set Rev 6
-#define V6X_8     HW_FMUM_ID(0x8)   // FMUV6X, HB              Sensor Set Rev 8
-#define V6X_16    HW_FMUM_ID(0x10)  // FMUV6X, Auterion        Sensor Set Rev 16 from EEPROM
+/* Hardware versioning disabled - using single configuration */
 
 #define UAVCAN_NUM_IFACES_RUNTIME  1
 
@@ -444,7 +428,6 @@
 #define PX4_GPIO_INIT_LIST { \
 		GPIO_TRACE,                       \
 		PX4_ADC_GPIO,                     \
-		GPIO_HW_VER_REV_DRIVE,            \
 		GPIO_CAN1_TX,                     \
 		GPIO_CAN1_RX,                     \
 		GPIO_CAN2_TX,                     \

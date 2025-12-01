@@ -235,15 +235,15 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	px4_platform_configure();
 
-	if (OK == board_determine_hw_info()) {
-		syslog(LOG_INFO, "[boot] Rev 0x%1x : Ver 0x%1x %s\n", board_get_hw_revision(), board_get_hw_version(),
-		       board_get_hw_type_name());
+	/* Hardware versioning disabled - using single configuration */
+	// if (OK == board_determine_hw_info()) {
+	// 	syslog(LOG_INFO, "[boot] Rev 0x%1x : Ver 0x%1x %s\n", board_get_hw_revision(), board_get_hw_version(),
+	// 	       board_get_hw_type_name());
+	// } else {
+	// 	syslog(LOG_ERR, "[boot] Failed to read HW revision and version\n");
+	// }
 
-	} else {
-		syslog(LOG_ERR, "[boot] Failed to read HW revision and version\n");
-	}
-
-	/* Configure the Actual SPI interfaces (after we determined the HW version)  */
+	/* Configure the Actual SPI interfaces */
 
 	stm32_spiinitialize();
 
