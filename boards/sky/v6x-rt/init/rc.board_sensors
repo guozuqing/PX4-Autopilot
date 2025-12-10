@@ -4,7 +4,7 @@
 #------------------------------------------------------------------------------
 #
 # UART mapping on PX4 FMU-V6XRT:
-#
+
 # LPUART1       /dev/ttyS0      CONSOLE
 # LPUART3       /dev/ttyS1      GPS
 # LPUART4       /dev/ttyS2      TELEM1
@@ -19,6 +19,9 @@
 # Start ADC driver for power monitoring
 board_adc start
 
+# SPI sensor power stabilization is handled in init.c (300ms delay after board_spi_reset)
+# No additional delay needed here
+
 # Internal SPI IMU sensors
 # ICM45686 on SPI1
 #icm45686 -R 12 -s -b 1 start
@@ -27,8 +30,11 @@ board_adc start
 #iim42653 -s -b 2 -R 6 start
 
 # SCH16T on SPI3 with DRDY (GPIO_AD_21 GPIO3_IO20)
-# Note: Driver handles power cycling internally for proper initialization
-sch16t -R 0 -s -b 3 start
+# Power cycle required for proper initialization (simulates hot-plug behavior)
+# Bus mask: 4 = 1 << (3-1) for SPI3
+board_spi_reset 100 4
+sleep 1
+sch16t -R 6 -s -b 3 start
 
 # Internal magnetometer
 rm3100 -I -b 3 start

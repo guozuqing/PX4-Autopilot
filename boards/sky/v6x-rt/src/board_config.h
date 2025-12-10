@@ -91,7 +91,8 @@
 #define LED_IOMUX (IOMUX_OPENDRAIN | IOMUX_PULL_NONE)
 #define GPIO_nLED_RED   /* GPIO_DISP_B2_00 GPIO5_IO01 */ (GPIO_PORT5 | GPIO_PIN1  | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | LED_IOMUX)
 #define GPIO_nLED_GREEN /* GPIO_DISP_B2_01 GPIO5_IO02 */ (GPIO_PORT5 | GPIO_PIN2  | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | LED_IOMUX)
-#define GPIO_nLED_BLUE  /* GPIO_EMC_B1_13  GPIO1_IO13 */ (GPIO_PORT1 | GPIO_PIN13 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | LED_IOMUX)
+// Disable blue LED on GPIO1_IO13 to prevent interference with GPIO Port 1 operations affecting SCH16T
+//#define GPIO_nLED_BLUE  /* GPIO_EMC_B1_13  GPIO1_IO13 */ (GPIO_PORT1 | GPIO_PIN13 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | LED_IOMUX)
 
 #define BOARD_HAS_CONTROL_STATUS_LEDS   1
 #define BOARD_OVERLOAD_LED              LED_RED
@@ -203,16 +204,21 @@
 #define GPIO_SPI6_DRDY2_EXTERNAL1 /* GPIO_EMC_B1_07  GPIO1_IO07 */ (GPIO_PORT1 | GPIO_PIN07  | GPIO_INPUT  | DRDY_IOMUX)
 
 
+// GPIO_EMC_B2_09 is SCH16T EXTRESN (external reset) pin
 #define GPIO_SPI3_nRESET_SENSOR3  /* GPIO_EMC_B2_09 GPIO2_IO19 */ (GPIO_PORT2 | GPIO_PIN19 | GPIO_OUTPUT | GPIO_OUTPUT_ONE | OUT_IOMUX)
-#define GPIO_SPI6_nRESET_EXTERNAL1  /* GPIO_EMC_B1_11 GPIO1_IO11 */ (GPIO_PORT1 | GPIO_PIN11 | GPIO_OUTPUT | GPIO_OUTPUT_ONE | OUT_IOMUX)
+// SPI6 reset disabled - no device on SPI6 needs hardware reset
+//#define GPIO_SPI6_nRESET_EXTERNAL1  /* GPIO_EMC_B1_11 GPIO1_IO11 */ (GPIO_PORT1 | GPIO_PIN11 | GPIO_OUTPUT | GPIO_OUTPUT_ONE | OUT_IOMUX)
 #define GPIO_SPIX_SYNC              /* GPIO_EMC_B1_18 GPIO1_IO18 */ (GPIO_PORT1 | GPIO_PIN18  | GPIO_OUTPUT | GPIO_OUTPUT_ONE | OUT_IOMUX)
 
+// SCH16T EXTRESN (External Reset) control
 #define SPI3_RESET(reset) px4_arch_gpiowrite(GPIO_SPI3_nRESET_SENSOR3, !(reset))
-#define SPI6_RESET(reset) px4_arch_gpiowrite(GPIO_SPI6_nRESET_EXTERNAL1, !(reset))
+// SPI6_RESET disabled - no device needs it
+//#define SPI6_RESET(reset) px4_arch_gpiowrite(GPIO_SPI6_nRESET_EXTERNAL1, !(reset))
 
 #define GPIO_SPI3_nRESET_SENSOR3_OFF         _PIN_OFF(GPIO_SPI3_nRESET_SENSOR3)
 #define GPIO_DRDY_OFF_SPI6_DRDY2_EXTERNAL1   _PIN_OFF(GPIO_SPI6_DRDY2_EXTERNAL1)
-#define GPIO_SPI6_nRESET_EXTERNAL1_OFF       _PIN_OFF(GPIO_SPI6_nRESET_EXTERNAL1)
+// GPIO_SPI6_nRESET_EXTERNAL1_OFF disabled since GPIO_SPI6_nRESET_EXTERNAL1 is disabled
+//#define GPIO_SPI6_nRESET_EXTERNAL1_OFF       _PIN_OFF(GPIO_SPI6_nRESET_EXTERNAL1)
 #define GPIO_SPIX_SYNC_OFF                   _PIN_OFF(GPIO_SPIX_SYNC)
 
 #define ADC_IOMUX (IOMUX_PULL_NONE)
@@ -310,11 +316,16 @@
 #define nARMED_INPUT_IOMUX  (IOMUX_PULL_UP)
 #define nARMED_OUTPUT_IOMUX (IOMUX_PULL_KEEP | IOMUX_SLEW_FAST)
 
+/* nARMED GPIO - Keep definitions but disable functionality
+ * Disabling BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE to prevent GPIO reconfiguration
+ * during arming which was causing SCH16T DRDY interrupt loss
+ */
 #define GPIO_nARMED_INIT     /* GPIO1_IO17 */ (GPIO_PORT1 | GPIO_PIN17 | GPIO_INPUT | nARMED_INPUT_IOMUX)
 #define GPIO_nARMED          /* GPIO1_IO17 */ (GPIO_PORT1 | GPIO_PIN17 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | nARMED_OUTPUT_IOMUX)
 
-#define BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE(enabled)  px4_arch_configgpio((enabled) ? GPIO_nARMED : GPIO_nARMED_INIT)
-#define BOARD_GET_EXTERNAL_LOCKOUT_STATE() px4_arch_gpioread(GPIO_nARMED)
+// Disable lockout state indication to prevent GPIO reconfig during arming
+//#define BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE(enabled)  px4_arch_configgpio((enabled) ? GPIO_nARMED : GPIO_nARMED_INIT)
+//#define BOARD_GET_EXTERNAL_LOCKOUT_STATE() px4_arch_gpioread(GPIO_nARMED)
 
 /* PWM Capture
  *
@@ -380,7 +391,8 @@
 
 #define GPIO_NFC_GPIO                  /* GPIO_EMC_B1_04 GPIO1_IO04 */ (GPIO_PORT1 | GPIO_PIN4  | GPIO_INPUT |  GENERAL_INPUT_IOMUX)
 
-#define GPIO_GPIO_EMC_B2_12           /* GPIO_EMC_B2_12 AKA PD15, PH11 */  (GPIO_PORT2 | GPIO_PIN22 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | OUT_IOMUX)
+// GPIO_EMC_B2_12 now used for PPM input via QTIMER1_TIMER3 (Hardware Rev 01)
+// #define GPIO_GPIO_EMC_B2_12           /* GPIO_EMC_B2_12 AKA PD15, PH11 */  (GPIO_PORT2 | GPIO_PIN22 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | OUT_IOMUX)
 
 
 /* 10/100 Mbps Ethernet & Gigabit Ethernet */
@@ -438,10 +450,12 @@
 
 /* High-resolution timer */
 #define HRT_TIMER               5  /* use GPT5 for the HRT */
-#define HRT_TIMER_CHANNEL       2  /* use capture/compare channel 1 */
+#define HRT_TIMER_CHANNEL       2  /* use capture/compare channel 2 */
 
-#define HRT_PPM_CHANNEL         /* GPIO_EMC_B1_09 GPIO_GPT5_CAPTURE1_1 */  1  /* use capture/compare channel 1 */
-#define GPIO_PPM_IN             /* GPIO_EMC_B1_09 GPT1_CAPTURE2 */ (GPIO_GPT5_CAPTURE1_1 | GENERAL_INPUT_IOMUX)
+/* PPM Input - Using QTIMER1 instead of GPT (Hardware Rev 01: GPIO_EMC_B2_12) */
+#define HRT_PPM_QTIMER          1  /* use QTIMER1 for PPM */
+#define HRT_PPM_QTIMER_CHANNEL  3  /* use QTIMER1 TIMER3 */
+#define GPIO_PPM_IN             /* GPIO_EMC_B2_12 QTIMER1_TIMER3 */ (GPIO_QTIMER1_TIMER3_1 | IOMUX_PULL_UP)
 
 #define RC_SERIAL_SINGLEWIRE            1 // Suport Single wire wiring
 #define RC_SERIAL_SWAP_RXTX             1 // Set Swap (but not supported in HW) to use Single wire
@@ -555,7 +569,7 @@
 		GPIO_LPUART10_CTS_INIT,           \
 		GPIO_nLED_RED,                    \
 		GPIO_nLED_GREEN,                  \
-		GPIO_nLED_BLUE,                   \
+		/* GPIO_nLED_BLUE disabled */    \
 		GPIO_BUZZER_1,                    \
 		GPIO_FLEXCAN1_TX,                 \
 		GPIO_FLEXCAN1_RX,                 \
@@ -581,15 +595,14 @@
 		GPIO_VDD_3V3_SD_CARD_EN,          \
 		GPIO_SPIX_SYNC,                   \
 		GPIO_SPI3_nRESET_SENSOR3,         \
-		GPIO_SPI6_nRESET_EXTERNAL1,       \
+		/* GPIO_SPI6_nRESET_EXTERNAL1 disabled */ \
 		GPIO_ETH_POWER_EN,                \
 		GPIO_ETH_PHY_nINT,                \
-		GPIO_GPIO_EMC_B2_12,              \
+		/* GPIO_GPIO_EMC_B2_12 now PPM input */ \
 		GPIO_NFC_GPIO,                    \
 		GPIO_TONE_ALARM_IDLE,             \
 		GPIO_nSAFETY_SWITCH_LED_OUT_INIT, \
 		GPIO_SAFETY_SWITCH_IN,            \
-		GPIO_PPM_IN,                      \
 		GPIO_nARMED_INIT,                 \
 		GPIO_ENET2_RX_ER_CONFIG1,         \
 		GPIO_ENET2_RX_DATA01_CONFIG4,     \

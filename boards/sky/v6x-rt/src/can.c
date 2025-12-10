@@ -54,6 +54,22 @@
 
 #include "board_config.h"
 
+#if !defined(CONFIG_CAN)
+
+#include <stdint.h>
+
+__EXPORT
+uint16_t board_get_can_interfaces(void)
+{
+	// Sky v6x-rt hardware supports CAN1 and CAN2
+	// Bit 0: CAN1, Bit 1: CAN2, Bit 2: CAN3
+	uint16_t enabled_interfaces = 0x3;  // Enable CAN1 and CAN2
+
+	return enabled_interfaces;
+}
+
+#else
+
 #ifdef CONFIG_CAN
 
 /************************************************************************************
@@ -126,4 +142,6 @@ int can_devinit(void)
 	return OK;
 }
 
-#endif
+#endif /* CONFIG_CAN */
+
+#endif /* !defined(CONFIG_CAN) */

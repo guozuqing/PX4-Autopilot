@@ -60,14 +60,25 @@
 #include <queue.h>
 #include <errno.h>
 #include <string.h>
+#include <syslog.h>
 
 #include <board_config.h>
 #include <drivers/drv_hrt.h>
 
+/* HRT_PPM_QTIMER is defined in board_config.h for QTIMER-based PPM input */
 
 #include "chip.h"
 #include "hardware/imxrt_gpt.h"
 #include "imxrt_periphclks.h"
+
+#ifdef HRT_PPM_QTIMER
+#include "hardware/imxrt_tmr.h"
+#include "hardware/imxrt_memorymap.h"
+#include "hardware/imxrt_iomuxc.h"
+#include <stdio.h>
+#include <syslog.h>
+#include "arm_internal.h"  /* for putreg32/getreg32 */
+#endif
 
 #undef PPM_DEBUG
 
@@ -213,7 +224,7 @@ static void hrt_call_enter(struct hrt_call *entry);
 static void hrt_call_reschedule(void);
 static void hrt_call_invoke(void);
 
-#if !defined(HRT_PPM_CHANNEL)
+#if !defined(HRT_PPM_CHANNEL) && !defined(HRT_PPM_QTIMER)
 
 /* When HRT_PPM_CHANNEL is not used provide null operations */
 
@@ -221,7 +232,7 @@ static void hrt_call_invoke(void);
 #  define STATUS_PPM        0
 #  define IFIE_PPM          0
 
-#else
+#elif defined(HRT_PPM_CHANNEL) && !defined(HRT_PPM_QTIMER)
 
 /* Specific registers and bits used by PPM sub-functions */
 
@@ -239,6 +250,43 @@ static void hrt_call_invoke(void);
 #   if (HRT_PPM_CHANNEL == HRT_TIMER_CHANNEL)
 #     error HRT_PPM_CHANNEL must not be the same as HRT_TIMER_CHANNEL
 #   endif
+
+#elif defined(HRT_PPM_QTIMER)
+
+/* QTIMER PPM configuration */
+
+#define QTIMER_PPM_BASE          IMXRT_TMR1_BASE
+#define QTIMER_PPM_TIMER         HRT_PPM_QTIMER
+#define QTIMER_PPM_CHANNEL       HRT_PPM_QTIMER_CHANNEL
+#define QTIMER_PPM_VECTOR        IMXRT_IRQ_QTIMER1
+#define QTIMER_CH_OFFSET         0x20
+#define QTIMER_CH_BASE(ch)       (QTIMER_PPM_BASE + ((ch) * QTIMER_CH_OFFSET))
+
+/* QTIMER register accessors for PPM channel */
+#define _REG16(_addr)            (*(volatile uint16_t *)(_addr))
+#define QREG16(_reg)             _REG16(QTIMER_CH_BASE(QTIMER_PPM_CHANNEL) + (_reg))
+
+#define rQTIMER_COMP1            QREG16(IMXRT_TMR_COMP1_OFFSET)
+#define rQTIMER_COMP2            QREG16(IMXRT_TMR_COMP2_OFFSET)
+#define rQTIMER_CAPT             QREG16(IMXRT_TMR_CAPT_OFFSET)
+#define rQTIMER_LOAD             QREG16(IMXRT_TMR_LOAD_OFFSET)
+#define rQTIMER_HOLD             QREG16(IMXRT_TMR_HOLD_OFFSET)
+#define rQTIMER_CNTR             QREG16(IMXRT_TMR_CNTR_OFFSET)
+#define rQTIMER_CTRL             QREG16(IMXRT_TMR_CTRL_OFFSET)
+#define rQTIMER_SCTRL            QREG16(IMXRT_TMR_SCTRL_OFFSET)
+#define rQTIMER_CMPLD1           QREG16(IMXRT_TMR_CMPLD1_OFFSET)
+#define rQTIMER_CMPLD2           QREG16(IMXRT_TMR_CMPLD2_OFFSET)
+#define rQTIMER_CSCTRL           QREG16(IMXRT_TMR_CSCTRL_OFFSET)
+#define rQTIMER_FILT             QREG16(IMXRT_TMR_FILT_OFFSET)
+#define rQTIMER_ENBL             _REG16(QTIMER_PPM_BASE + IMXRT_TMR_ENBL_OFFSET)
+
+#define GPT_CR_IM_BOTH           0  /* Not used for QTIMER */
+#define STATUS_PPM               TMR_SCTRL_IEF
+#define IFIE_PPM                 TMR_SCTRL_IEFIE
+
+#endif /* HRT_PPM_QTIMER */
+
+#if defined(HRT_PPM_CHANNEL) || defined(HRT_PPM_QTIMER)
 /*
  * PPM decoder tuning parameters
  */
@@ -294,8 +342,15 @@ struct {
 	} phase;
 } ppm;
 
+#ifdef HRT_PPM_CHANNEL
 static void	hrt_ppm_decode(uint32_t status);
-#endif /* HRT_PPM_CHANNEL */
+#endif
+
+#ifdef HRT_PPM_QTIMER
+static void	qtimer_ppm_decode(uint16_t status);
+#endif
+
+#endif /* HRT_PPM_CHANNEL || HRT_PPM_QTIMER */
 
 /**
  * Initialize the timer we are going to use.
@@ -486,6 +541,222 @@ error:
 }
 #endif /* HRT_PPM_CHANNEL */
 
+#ifdef HRT_PPM_QTIMER
+/**
+ * Initialize QTIMER for PPM input capture
+ */
+static void qtimer_ppm_init(void)
+{
+	syslog(LOG_INFO, "QTIMER_PPM_INIT: Starting initialization...\n");
+
+	/* Enable QTIMER1 clock */
+	imxrt_clockall_timer1();
+
+	/* Disable timer during configuration */
+	rQTIMER_ENBL &= ~(1 << QTIMER_PPM_CHANNEL);
+
+	/* Manually configure IOMUX registers for GPIO_EMC_B2_12 as QTIMER1_TIMER3
+	 * Using NuttX-defined register addresses
+	 */
+	/* Set MUX to ALT9 (QTIMER1_TIMER3) with SION=1 for input observation */
+	putreg32(0x19, IMXRT_PADMUX_GPIO_EMC_B2_12);  /* ALT9 + SION */
+
+	/* Configure PAD with strong pull-up
+	 * Bits: PKE(12)=1, PUE(13)=1, PUS(15:14)=11b (100K ohm pull-up)
+	 * DSE(3:1)=000 (disabled), FSEL(5:4)=00 (slow), ODE(11)=0 (no open drain)
+	 */
+	putreg32(0xB000, IMXRT_PADCTL_GPIO_EMC_B2_12);  /* 100K pull-up enabled */
+
+	/* Configure SELECT_INPUT daisy chain - need to find the right register */
+	/* For now set to 0 = select GPIO_EMC_B2_12 ALT9 as QTIMER1_TIMER3 input */
+	#define IOMUXC_QTIMER1_TIMER3_SELECT_INPUT  (IMXRT_IOMUXC_BASE + 0x04E8)
+	putreg32(0, IOMUXC_QTIMER1_TIMER3_SELECT_INPUT);
+
+	/* Verify configuration */
+	uint32_t mux_verify = getreg32(IMXRT_PADMUX_GPIO_EMC_B2_12);
+	uint32_t pad_verify = getreg32(IMXRT_PADCTL_GPIO_EMC_B2_12);
+
+	syslog(LOG_INFO, "QTIMER_PPM_INIT: MUX=0x%08lx PAD=0x%08lx\n", mux_verify, pad_verify);
+
+	if ((pad_verify & 0xB000) != 0xB000) {
+		syslog(LOG_WARNING, "QTIMER_PPM_INIT: PAD pull-up not set! PAD=0x%08lx\n", pad_verify);
+	}
+
+	/* Reset control register */
+	rQTIMER_CTRL = 0;
+
+	/* Configure QTIMER for free-running counter with input capture
+	 * - Count mode: Count rising edges of primary source (MODE1)
+	 * - Primary source: IP bus clock / 1 (150 MHz) - provides time base
+	 * - Input capture: Monitor external pin for edges (via SCTRL.CAPTURE_MODE)
+	 * - LENGTH: Count until compare, then reload to 0 (free-running)
+	 */
+	rQTIMER_CTRL = TMR_CTRL_CM_MODE1 |       /* Count rising edges of primary */
+	               TMR_CTRL_PCS_DIV1 |        /* Primary: IP bus clock / 1 (150 MHz) */
+	               TMR_CTRL_LENGTH;           /* Count until compare, then reload */
+	/* Note: SCS not used for input capture - SCTRL.CAPTURE_MODE controls capture */
+
+	/* Configure input capture on external pin (TIMER3 input)
+	 * - Capture on both rising and falling edges
+	 * - Each edge triggers: CAPT = current counter, IEF = 1, interrupt
+	 */
+	rQTIMER_SCTRL = TMR_SCTRL_CAPTURE_BOTH |  /* Capture both edges of input pin */
+	                TMR_SCTRL_IEFIE;           /* Enable input edge interrupt */
+
+	/* Set compare value to maximum for free-running (16-bit counter) */
+	rQTIMER_COMP1 = 0xFFFF;
+	rQTIMER_COMP2 = 0xFFFF;
+
+	/* Load initial value */
+	rQTIMER_LOAD = 0;
+
+	/* Clear any pending flags */
+	rQTIMER_SCTRL |= TMR_SCTRL_IEF | TMR_SCTRL_TCF | TMR_SCTRL_TOF;
+
+	/* Enable QTIMER channel */
+	rQTIMER_ENBL |= (1 << QTIMER_PPM_CHANNEL);
+
+	/* Attach and enable QTIMER interrupt */
+	irq_attach(QTIMER_PPM_VECTOR, hrt_tim_isr, NULL);
+	up_enable_irq(QTIMER_PPM_VECTOR);
+
+	/* Force output to console - use printf to ensure visibility */
+	printf("\n*** QTIMER PPM INIT ***\n");
+	printf("QTIMER%d CH%d for PPM on GPIO_EMC_B2_12\n", QTIMER_PPM_TIMER, QTIMER_PPM_CHANNEL);
+	printf("IRQ=%d, Base=0x%08lx\n", QTIMER_PPM_VECTOR, (unsigned long)QTIMER_PPM_BASE);
+	printf("CTRL=0x%04x, SCTRL=0x%04x, ENBL=0x%04x\n", rQTIMER_CTRL, rQTIMER_SCTRL, rQTIMER_ENBL);
+	printf("*** QTIMER INIT DONE ***\n\n");
+}
+
+/**
+ * Handle QTIMER PPM decoder state machine
+ */
+static void qtimer_ppm_decode(uint16_t status)
+{
+	/* First call notification */
+	static bool first_call = true;
+	if (first_call) {
+		first_call = false;
+		_info("*** QTIMER PPM decoder first call! status=0x%04x ***\n", status);
+	}
+
+	/* Read captured value - reading HOLD automatically captures CAPT */
+	uint16_t count = rQTIMER_HOLD;
+
+	/* Handle 16-bit counter overflow to create virtual 32-bit timestamp */
+	static uint16_t last_count = 0;
+	static uint32_t overflow_count = 0;
+
+	if (count < last_count) {
+		/* Counter wrapped around (16-bit overflow) */
+		overflow_count++;
+	}
+	last_count = count;
+
+	/* Create 32-bit timestamp from overflow count and current count
+	 * QTIMER runs at 150 MHz, convert to microseconds: count / 150
+	 * To avoid floating point: (count * 1000) / 150 = (count * 20) / 3
+	 */
+	uint32_t count_us = ((uint32_t)count * 20) / 3;
+	uint32_t overflow_us = (overflow_count * 65536UL * 20) / 3;
+	uint32_t absolute_time_us = overflow_us + count_us;
+
+	/* Calculate pulse width */
+	uint32_t width = absolute_time_us - ppm.last_edge;
+	uint32_t interval;
+	unsigned i;
+
+#if PPM_DEBUG
+	ppm_edge_history[ppm_edge_next++] = width;
+	if (ppm_edge_next >= EDGE_BUFFER_COUNT) {
+		ppm_edge_next = 0;
+	}
+#endif
+
+	/* Check for start pulse (frame sync) */
+	if (width >= PPM_MIN_START) {
+		/* Handle channel count changes */
+		if (ppm.next_channel != ppm_decoded_channels) {
+			static unsigned new_channel_count;
+			static unsigned new_channel_holdoff;
+
+			if (new_channel_count != ppm.next_channel) {
+				new_channel_count = ppm.next_channel;
+				new_channel_holdoff = PPM_CHANNEL_LOCK;
+			} else if (new_channel_holdoff > 0) {
+				new_channel_holdoff--;
+			} else {
+				ppm_decoded_channels = new_channel_count;
+				new_channel_count = 0;
+			}
+		} else {
+			if (ppm.next_channel >= PPM_MIN_CHANNELS) {
+				for (i = 0; i < ppm.next_channel; i++) {
+					ppm_buffer[i] = ppm_temp_buffer[i];
+				}
+				ppm_last_valid_decode = hrt_absolute_time();
+			}
+		}
+
+		ppm.next_channel = 0;
+		ppm.phase = ARM;
+		ppm.last_edge = absolute_time_us;
+		return;
+	}
+
+	switch (ppm.phase) {
+	case UNSYNCH:
+		break;
+
+	case ARM:
+		if (width < PPM_MIN_PULSE_WIDTH || width > PPM_MAX_PULSE_WIDTH) {
+			goto error;
+		}
+		ppm.last_mark = ppm.last_edge;
+		ppm_frame_length = (uint16_t)(ppm.last_edge - ppm.frame_start);
+		ppm.frame_start = ppm.last_edge;
+		ppm.phase = ACTIVE;
+		break;
+
+	case INACTIVE:
+		if (width < PPM_MIN_PULSE_WIDTH || width > PPM_MAX_PULSE_WIDTH) {
+			goto error;
+		}
+		ppm.phase = ACTIVE;
+		break;
+
+	case ACTIVE:
+		interval = absolute_time_us - ppm.last_mark;
+		ppm.last_mark = absolute_time_us;
+
+#if PPM_DEBUG
+		ppm_pulse_history[ppm_pulse_next++] = interval;
+		if (ppm_pulse_next >= EDGE_BUFFER_COUNT) {
+			ppm_pulse_next = 0;
+		}
+#endif
+
+		if ((interval < PPM_MIN_CHANNEL_VALUE) || (interval > PPM_MAX_CHANNEL_VALUE)) {
+			goto error;
+		}
+
+		if (ppm.next_channel < PPM_MAX_CHANNELS) {
+			ppm_temp_buffer[ppm.next_channel++] = interval;
+		}
+
+		ppm.phase = INACTIVE;
+		break;
+	}
+
+	ppm.last_edge = absolute_time_us;
+	return;
+
+error:
+	ppm.phase = UNSYNCH;
+	ppm_decoded_channels = 0;
+}
+#endif /* HRT_PPM_QTIMER */
+
 /**
  * Handle the compare interrupt by calling the callout dispatcher
  * and then re-scheduling the next deadline.
@@ -493,6 +764,34 @@ error:
 static int
 hrt_tim_isr(int irq, void *context, void *arg)
 {
+#ifdef HRT_PPM_QTIMER
+	/* Check if this is QTIMER PPM interrupt */
+	if (irq == QTIMER_PPM_VECTOR) {
+		uint16_t qtimer_status = rQTIMER_SCTRL;
+
+		/* Debug: increment interrupt counter */
+		static uint32_t qtimer_irq_count = 0;
+		qtimer_irq_count++;
+
+		/* Check for input edge flag */
+		if (qtimer_status & STATUS_PPM) {
+			/* Clear the interrupt flag */
+			rQTIMER_SCTRL |= STATUS_PPM;
+
+			/* Decode PPM signal */
+			qtimer_ppm_decode(qtimer_status);
+		}
+
+		/* Log first few interrupts for debugging */
+		if (qtimer_irq_count <= 10) {
+			printf("QTIMER IRQ #%lu: status=0x%04x, HOLD=0x%04x\n",
+			       (unsigned long)qtimer_irq_count, qtimer_status, rQTIMER_HOLD);
+		}
+
+		return OK;
+	}
+#endif
+
 	/* grab the timer for latency tracking purposes */
 
 	latency_actual = rCNT;
@@ -549,6 +848,19 @@ hrt_absolute_time(void)
 	static volatile hrt_abstime base_time;
 	static volatile uint32_t last_count;
 
+#ifdef HRT_PPM_QTIMER
+	/* Debug: Report QTIMER status once after system is stable */
+	static uint32_t call_count = 0;
+	if (++call_count == 1000) {
+		_info("=== QTIMER STATUS (after 1000 calls) ===\n");
+		_info("QTIMER Base=0x%08lx\n", (unsigned long)QTIMER_PPM_BASE);
+		_info("CTRL=0x%04x, SCTRL=0x%04x, ENBL=0x%04x\n",
+		      rQTIMER_CTRL, rQTIMER_SCTRL, rQTIMER_ENBL);
+		_info("CNTR=0x%04x, HOLD=0x%04x\n", rQTIMER_CNTR, rQTIMER_HOLD);
+		_info("=== END QTIMER STATUS ===\n");
+	}
+#endif
+
 	/* prevent re-entry */
 	flags = px4_enter_critical_section();
 
@@ -597,10 +909,27 @@ hrt_init(void)
 	sq_init(&callout_queue);
 	hrt_tim_init();
 
+	/* Debug: Always print HRT init */
+	printf("\n=== HRT INIT START ===\n");
+
 #ifdef HRT_PPM_CHANNEL
+	printf("HRT_PPM_CHANNEL defined: %d\n", HRT_PPM_CHANNEL);
 	/* configure the PPM input pin */
 	px4_arch_configgpio(GPIO_PPM_IN);
+#else
+	printf("HRT_PPM_CHANNEL NOT defined\n");
 #endif
+
+#ifdef HRT_PPM_QTIMER
+	syslog(LOG_INFO, "HRT_INIT: HRT_PPM_QTIMER defined = %d\n", HRT_PPM_QTIMER);
+	/* Initialize QTIMER for PPM input */
+	qtimer_ppm_init();
+	syslog(LOG_INFO, "HRT_INIT: qtimer_ppm_init() completed\n");
+#else
+	syslog(LOG_INFO, "HRT_INIT: HRT_PPM_QTIMER NOT defined\n");
+#endif
+
+	printf("=== HRT INIT END ===\n\n");
 }
 
 /**

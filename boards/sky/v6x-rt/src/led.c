@@ -63,7 +63,7 @@ __END_DECLS
 
 
 static uint32_t g_ledmap[] = {
-	GPIO_nLED_BLUE,   // Indexed by LED_BLUE
+	0,                // LED_BLUE disabled to prevent GPIO Port 1 interference with SCH16T
 	GPIO_nLED_RED,    // Indexed by LED_RED, LED_AMBER
 	GPIO_LED_SAFETY,  // Indexed by LED_SAFETY
 	GPIO_nLED_GREEN,  // Indexed by LED_GREEN

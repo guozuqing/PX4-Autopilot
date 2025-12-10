@@ -325,7 +325,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	// Use the default HW_VER_REV(0x0,0x0) for Ramtron
 
 	// Simple initialization like ZeroOne X6 board
-	// SCH16T will self-initialize on power-up
 	imxrt_spiinitialize();
 
 	/* Configure the HW based on the manifest
@@ -383,6 +382,10 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	imxrt_spiinitialize();
 
+	/* Reset all SPI buses with 10ms
+	 * This ensures all buses are powered on
+	 * SPI3 (SCH16T) will get additional 100ms power cycle in rc.board_sensors
+	 */
 	board_spi_reset(10, 0xffff);
 
 	/* configure the DMA allocator */

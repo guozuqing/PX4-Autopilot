@@ -68,6 +68,7 @@ set(srcs
 if(${PX4_PLATFORM} STREQUAL "nuttx")
 	list(APPEND srcs
 		test_mount.cpp
+		test_ppm_qtimer.c
 		test_time.c
 		test_uart_break.c
 		)

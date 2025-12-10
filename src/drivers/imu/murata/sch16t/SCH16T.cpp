@@ -53,7 +53,7 @@ SCH16T::SCH16T(const I2CSPIDriverConfig &config) :
 		_drdy_missed_perf = perf_alloc(PC_COUNT, MODULE_NAME": DRDY missed");
 	}
 
-#if defined(SPI6_nRESET_EXTERNAL1)
+#if defined(SPI3_RESET)
 	_hardware_reset_available = true;
 #endif
 }
@@ -72,26 +72,8 @@ SCH16T::~SCH16T()
 
 int SCH16T::init()
 {
-	// Power cycle the sensor to ensure clean initialization
-	// This simulates hot-plug behavior which is known to work
-	// Direct GPIO control: GPIO_VDD_3V3_SENSORS3_EN (GPIO_EMC_B1_14 GPIO1_IO14)
-
-#if defined(GPIO_VDD_3V3_SENSORS3_EN)
-	PX4_INFO("Power cycling SPI3 sensor (100ms)");
-
-	// Power off: GPIO_EMC_B1_14 = LOW
-	px4_arch_gpiowrite(GPIO_VDD_3V3_SENSORS3_EN, 0);
-	px4_usleep(100000);  // 100ms power-off
-
-	// Power on: GPIO_EMC_B1_14 = HIGH
-	px4_arch_gpiowrite(GPIO_VDD_3V3_SENSORS3_EN, 1);
-	px4_usleep(1000000); // 1s wait for sensor stabilization
-
-	PX4_INFO("Power cycle complete, initializing sensor");
-#else
-	PX4_WARN("GPIO_VDD_3V3_SENSORS3_EN not defined, skipping power cycle");
-	px4_usleep(POWER_ON_TIME);
-#endif
+	// Initial power-on delay is handled in probe() function
+	// which ensures minimum POWER_ON_TIME has elapsed
 
 	int ret = SPI::init();
 
@@ -107,13 +89,21 @@ int SCH16T::init()
 
 int SCH16T::probe()
 {
-	if (hrt_absolute_time() < POWER_ON_TIME) {
-		PX4_WARN("Required Power-On Start-Up Time %" PRIu32 " ms", POWER_ON_TIME);
-	}
+	// Power stabilization delay is handled in init.c (300ms after board_spi_reset)
+	// Sensor should be ready by the time driver starts
+
+	PX4_INFO("Probing SCH16T sensor...");
 
 	RegisterRead(COMP_ID);
 	uint16_t comp_id = SPI48_DATA_UINT16(RegisterRead(ASIC_ID));
 	uint16_t asic_id = SPI48_DATA_UINT16(RegisterRead(ASIC_ID));
+
+	// Check if sensor is responding (not 0xFFFF)
+	if (comp_id == 0xFFFF && asic_id == 0xFFFF) {
+		PX4_ERR("Sensor not ready - all registers read as 0xFFFF");
+		PX4_ERR("Power stabilization may be insufficient");
+		return PX4_ERROR;
+	}
 
 	RegisterRead(SN_ID1);
 	uint16_t sn_id1 = SPI48_DATA_UINT16(RegisterRead(SN_ID2));
@@ -161,13 +151,16 @@ void SCH16T::Reset()
 
 	ScheduleClear();
 
+	// Software reset - sensor will be reinitialized via state machine
 	_state = STATE::RESET_INIT;
 	ScheduleNow();
 }
 
 void SCH16T::ResetSpi6(bool reset)
 {
-#if defined(SPI6_RESET)
+#if defined(SPI3_RESET)
+	SPI3_RESET(reset);
+#elif defined(SPI6_RESET)
 	SPI6_RESET(reset);
 #endif
 }
@@ -252,16 +245,8 @@ void SCH16T::RunImpl()
 			ReadStatusRegisters(); // Read all status registers twice
 			ReadStatusRegisters();
 
-			// Temporarily skip status validation to allow data reading
-			// TODO: Re-enable validation after understanding sensor status requirements
-			bool status_ok = true; // ValidateSensorStatus();
-			bool config_ok = ValidateRegisterConfiguration();
-
-			if (!status_ok) {
-				PX4_WARN("Sensor status validation skipped");
-			}
-
-			if (config_ok) {
+			// Check that registers are configured properly and that the sensor status is OK
+			if (ValidateSensorStatus() && ValidateRegisterConfiguration()) {
 				_state = STATE::READ;
 
 				if (_drdy_gpio) {
@@ -273,7 +258,6 @@ void SCH16T::RunImpl()
 				}
 
 			} else {
-				PX4_WARN("Register configuration failed, retrying");
 				_state = STATE::RESET_INIT;
 				ScheduleDelayed(100_ms);
 			}
@@ -315,11 +299,17 @@ void SCH16T::RunImpl()
 			} else {
 				perf_count(_bad_transfer_perf);
 				_failure_count++;
+				// Add diagnostic logging
+				if (_failure_count == 1 || _failure_count == 5) {
+					PX4_WARN("SPI read failure detected (count: %d)", _failure_count);
+				}
 			}
 
 			// Reset if successive failures
 			if (_failure_count > 10) {
-				PX4_INFO("Failure count high, resetting");
+				PX4_ERR("Failure count high (%d), resetting - bad_transfer: %llu, drdy_missed: %llu",
+					_failure_count, perf_event_count(_bad_transfer_perf),
+					perf_event_count(_drdy_missed_perf));
 				Reset();
 				return;
 			}
@@ -351,9 +341,6 @@ bool SCH16T::ReadData(SensorData *data)
 
 	uint64_t values[] = { gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z, temp };
 
-	static uint32_t debug_counter = 0;
-	bool should_debug = (debug_counter++ % 100 == 0); // 每100次打印一次
-
 	for (auto v : values) {
 		// [1b ][1b][ 2b ]
 		// [IDS][CE][S1:0]
@@ -368,17 +355,14 @@ bool SCH16T::ReadData(SensorData *data)
 		// 		11: Initialization running
 
 		if (v & MASK48_GENERAL_ERROR) {
-			if (should_debug) PX4_WARN("General error: frame=0x%llx", (unsigned long long)v);
 			perf_count(_perf_general_error);
 			return false;
 
 		} else if (v & MASK48_COMMAND_ERROR) {
-			if (should_debug) PX4_WARN("Command error: frame=0x%llx", (unsigned long long)v);
 			perf_count(_perf_command_error);
 			return false;
 
 		} else if ((v & MASK48_DOING_INIT) == MASK48_DOING_INIT) {
-			if (should_debug) PX4_WARN("Still initializing: frame=0x%llx", (unsigned long long)v);
 			perf_count(_perf_doing_initialization);
 			return false;
 
@@ -388,11 +372,7 @@ bool SCH16T::ReadData(SensorData *data)
 		}
 
 		// Validate the CRC
-		uint8_t received_crc = uint8_t(v & 0xff);
-		uint8_t calculated_crc = CalculateCRC8(v);
-		if (received_crc != calculated_crc) {
-			if (should_debug) PX4_WARN("CRC error: frame=0x%llx, recv=0x%02x, calc=0x%02x",
-			                            (unsigned long long)v, received_crc, calculated_crc);
+		if (uint8_t(v & 0xff) != CalculateCRC8(v)) {
 			perf_count(_perf_crc_bad);
 			return false;
 		}
