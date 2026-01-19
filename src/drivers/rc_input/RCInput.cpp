@@ -670,20 +670,10 @@ void RCInput::Run()
 
 		case RC_SCAN_PPM:
 			// skip PPM if it's not supported
-#ifdef HRT_PPM_CHANNEL
+#ifdef HRT_PPM_GPIO
 			if (_rc_scan_begin == 0) {
 				_rc_scan_begin = cycle_timestamp;
-
-#ifdef RC_SERIAL_PORT_SHARED_PPM_PIN_GPIO_RX
-
-				if (strcmp(_device, RC_SERIAL_PORT) == 0) {
-					px4_arch_unconfiggpio(RC_SERIAL_PORT_SHARED_PPM_PIN_GPIO_RX);
-				}
-
-#endif // RC_SERIAL_PORT_SHARED_PPM_PIN_GPIO_RX
-
-				// Configure timer input pin for CPPM
-				px4_arch_configgpio(GPIO_PPM_IN);
+				// Note: HRT_PPM_GPIO is initialized in hrt_init(), no need to configure here
 
 			} else if (_rc_scan_locked || cycle_timestamp - _rc_scan_begin < rc_scan_max) {
 
@@ -703,17 +693,6 @@ void RCInput::Run()
 				}
 
 			} else {
-				// disable CPPM input by mapping it away from the timer capture input
-				px4_arch_unconfiggpio(GPIO_PPM_IN);
-
-#ifdef RC_SERIAL_PORT_SHARED_PPM_PIN_GPIO_RX
-
-				if (strcmp(_device, RC_SERIAL_PORT) == 0) {
-					px4_arch_configgpio(RC_SERIAL_PORT_SHARED_PPM_PIN_GPIO_RX);
-				}
-
-#endif // RC_SERIAL_PORT_SHARED_PPM_PIN_GPIO_RX
-
 				// Scan the next protocol
 				set_rc_scan_state(RC_SCAN_CRSF);
 			}
@@ -721,7 +700,7 @@ void RCInput::Run()
 #else   // skip PPM if it's not supported
 			set_rc_scan_state(RC_SCAN_CRSF);
 
-#endif  // HRT_PPM_CHANNEL
+#endif  // HRT_PPM_GPIO
 
 			break;
 

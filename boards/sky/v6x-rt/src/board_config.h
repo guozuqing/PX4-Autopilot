@@ -104,7 +104,7 @@
  *
  * Note that these are unshifted addresses.
  */
-#define BOARD_MTD_NUM_EEPROM        2 /* MTD: base_eeprom, imu_eeprom*/
+/* No I2C EEPROM on this board, only FLEXSPI FRAM */
 #define PX4_I2C_OBDEV_SE050         0x48
 
 
@@ -338,8 +338,8 @@
 /* PWM
  */
 
-#define DIRECT_PWM_OUTPUT_CHANNELS  12
-#define BOARD_NUM_IO_TIMERS         12
+#define DIRECT_PWM_OUTPUT_CHANNELS  16
+#define BOARD_NUM_IO_TIMERS         14
 
 // Input Capture not supported on MVP
 
@@ -452,10 +452,12 @@
 #define HRT_TIMER               5  /* use GPT5 for the HRT */
 #define HRT_TIMER_CHANNEL       2  /* use capture/compare channel 2 */
 
-/* PPM Input - Using QTIMER1 instead of GPT (Hardware Rev 01: GPIO_EMC_B2_12) */
-#define HRT_PPM_QTIMER          1  /* use QTIMER1 for PPM */
-#define HRT_PPM_QTIMER_CHANNEL  3  /* use QTIMER1 TIMER3 */
-#define GPIO_PPM_IN             /* GPIO_EMC_B2_12 QTIMER1_TIMER3 */ (GPIO_QTIMER1_TIMER3_1 | IOMUX_PULL_UP)
+/* PPM Input - Using GPIO edge interrupt + hrt_absolute_time()
+ * GPIO_EMC_B2_12 = GPIO2 Pin 22 (ALT5 mode, set automatically by NuttX)
+ * NuttX uses internal g_gpio2_padmux table to map GPIO2 pin 22 to correct PADMUX
+ */
+#define HRT_PPM_GPIO            1  /* use GPIO edge interrupt for PPM */
+#define GPIO_PPM_IN             (GPIO_INTERRUPT | GPIO_INTBOTH_EDGES | GPIO_PORT2 | GPIO_PIN22 | IOMUX_PULL_UP)
 
 #define RC_SERIAL_SINGLEWIRE            1 // Suport Single wire wiring
 #define RC_SERIAL_SWAP_RXTX             1 // Set Swap (but not supported in HW) to use Single wire
@@ -599,6 +601,7 @@
 		GPIO_ETH_POWER_EN,                \
 		GPIO_ETH_PHY_nINT,                \
 		/* GPIO_GPIO_EMC_B2_12 now PPM input */ \
+		GPIO_PPM_IN,                      \
 		GPIO_NFC_GPIO,                    \
 		GPIO_TONE_ALARM_IDLE,             \
 		GPIO_nSAFETY_SWITCH_LED_OUT_INIT, \

@@ -63,7 +63,7 @@
 #include "crsf_telemetry.h"
 #include "ghst_telemetry.hpp"
 
-#ifdef HRT_PPM_CHANNEL
+#ifdef HRT_PPM_GPIO
 # include <systemlib/ppm_decode.h>
 #endif
 

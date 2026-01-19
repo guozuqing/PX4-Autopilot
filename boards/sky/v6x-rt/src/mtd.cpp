@@ -37,17 +37,8 @@
 #include <nuttx/spi/spi.h>
 #include <px4_platform_common/px4_manifest.h>
 
-static const px4_mft_device_t qspi_flash = {        // FM25V02A on FMUM 32K 512 X 64
+static const px4_mft_device_t qspi_flash = {        // FM25V05-GTR on FLEXSPI2 64K
 	.bus_type = px4_mft_device_t::FLEXSPI,             // Using Flex SPI
-};
-//                                                              KiB BS    nB
-static const px4_mft_device_t i2c3 = {             // 24LC64T on IMU  8K 32 X 256
-	.bus_type = px4_mft_device_t::I2C,
-	.devid    = PX4_MK_I2C_DEVID(3, 0x50)
-};
-static const px4_mft_device_t i2c6 = {             // 24LC64T on BASE  8K 32 X 256
-	.bus_type =  px4_mft_device_t::I2C,
-	.devid    =  PX4_MK_I2C_DEVID(6, 0x51)
 };
 
 
@@ -63,52 +54,11 @@ static const px4_mtd_entry_t fmum_fram = {
 	},
 };
 
-static const px4_mtd_entry_t base_eeprom = {
-	.device = &i2c6,
-	.npart = 2,
-	.partd = {
-		{
-			.type = MTD_MFT_VER,
-			.path = "/fs/mtd_mft_ver",
-			.nblocks = 248
-		},
-		{
-			.type = MTD_NET,
-			.path = "/fs/mtd_net",
-			.nblocks = 8 // 256 = 32 * 8
-
-		}
-	},
-};
-
-static const px4_mtd_entry_t imu_eeprom = {
-	.device = &i2c3,
-	.npart = 3,
-	.partd = {
-		{
-			.type = MTD_CALDATA,
-			.path = "/fs/mtd_caldata",
-			.nblocks = 240
-		},
-		{
-			.type = MTD_MFT_REV,
-			.path = "/fs/mtd_mft_rev",
-			.nblocks = 8
-		},
-		{
-			.type = MTD_ID,
-			.path = "/fs/mtd_id",
-			.nblocks = 8 // 256 = 32 * 8
-		}
-	},
-};
 
 static const px4_mtd_manifest_t board_mtd_config = {
-	.nconfigs   = 3,
+	.nconfigs   = 1,
 	.entries = {
 		&fmum_fram,
-		&base_eeprom,
-		&imu_eeprom
 	}
 };
 
