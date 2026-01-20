@@ -97,6 +97,9 @@ if(CONFIG_MODULES_MC_RATE_CONTROL)
 		# [11000, 11999] Hexa Cox
 		11001_hexa_cox
 
+		# [10000, 10999] Hexadecacopter (16 rotors)
+		10001_hexadeca_x
+
 		# [12000, 12999] Octo Cox
 		12001_octo_cox
 

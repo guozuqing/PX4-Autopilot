@@ -320,8 +320,9 @@
  * Disabling BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE to prevent GPIO reconfiguration
  * during arming which was causing SCH16T DRDY interrupt loss
  */
-#define GPIO_nARMED_INIT     /* GPIO1_IO17 */ (GPIO_PORT1 | GPIO_PIN17 | GPIO_INPUT | nARMED_INPUT_IOMUX)
-#define GPIO_nARMED          /* GPIO1_IO17 */ (GPIO_PORT1 | GPIO_PIN17 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | nARMED_OUTPUT_IOMUX)
+/* Disabled for PWM CH14 - GPIO_EMC_B1_17 */
+//#define GPIO_nARMED_INIT     /* GPIO1_IO17 */ (GPIO_PORT1 | GPIO_PIN17 | GPIO_INPUT | nARMED_INPUT_IOMUX)
+//#define GPIO_nARMED          /* GPIO1_IO17 */ (GPIO_PORT1 | GPIO_PIN17 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | nARMED_OUTPUT_IOMUX)
 
 // Disable lockout state indication to prevent GPIO reconfig during arming
 //#define BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE(enabled)  px4_arch_configgpio((enabled) ? GPIO_nARMED : GPIO_nARMED_INIT)
@@ -333,7 +334,8 @@
  */
 #define DIRECT_PWM_CAPTURE_CHANNELS  1
 #define CAP_IOMUX (IOMUX_PULL_NONE | IOMUX_SLEW_FAST)
-#define GPIO_FMU_CAP1 /* GPIO_EMC_B1_20 TMR4_TIMER0 */  (GPIO_QTIMER4_TIMER0_1 | CAP_IOMUX)
+/* Disabled for PWM CH16 - GPIO_EMC_B1_20 */
+//#define GPIO_FMU_CAP1 /* GPIO_EMC_B1_20 TMR4_TIMER0 */  (GPIO_QTIMER4_TIMER0_1 | CAP_IOMUX)
 
 /* PWM
  */
@@ -389,7 +391,8 @@
 
 /* NFC GPIO */
 
-#define GPIO_NFC_GPIO                  /* GPIO_EMC_B1_04 GPIO1_IO04 */ (GPIO_PORT1 | GPIO_PIN4  | GPIO_INPUT |  GENERAL_INPUT_IOMUX)
+/* Disabled for PWM CH13 - GPIO_EMC_B1_04 */
+//#define GPIO_NFC_GPIO                  /* GPIO_EMC_B1_04 GPIO1_IO04 */ (GPIO_PORT1 | GPIO_PIN4  | GPIO_INPUT |  GENERAL_INPUT_IOMUX)
 
 // GPIO_EMC_B2_12 now used for PPM input via QTIMER1_TIMER3 (Hardware Rev 01)
 // #define GPIO_GPIO_EMC_B2_12           /* GPIO_EMC_B2_12 AKA PD15, PH11 */  (GPIO_PORT2 | GPIO_PIN22 | GPIO_OUTPUT | GPIO_OUTPUT_ZERO | OUT_IOMUX)
@@ -580,7 +583,7 @@
 		GPIO_FLEXCAN3_TX,                 \
 		GPIO_FLEXCAN3_RX,                 \
 		GPIO_HEATER_OUTPUT,               \
-		GPIO_FMU_CAP1,                    \
+		/* GPIO_FMU_CAP1 disabled for PWM CH16 */ \
 		GPIO_nPOWER_IN_A,                 \
 		GPIO_nPOWER_IN_B,                 \
 		GPIO_nPOWER_IN_C,                 \
@@ -602,11 +605,11 @@
 		GPIO_ETH_PHY_nINT,                \
 		/* GPIO_GPIO_EMC_B2_12 now PPM input */ \
 		GPIO_PPM_IN,                      \
-		GPIO_NFC_GPIO,                    \
+		/* GPIO_NFC_GPIO disabled for PWM CH13 */ \
 		GPIO_TONE_ALARM_IDLE,             \
 		GPIO_nSAFETY_SWITCH_LED_OUT_INIT, \
 		GPIO_SAFETY_SWITCH_IN,            \
-		GPIO_nARMED_INIT,                 \
+		/* GPIO_nARMED_INIT disabled for PWM CH14 */ \
 		GPIO_ENET2_RX_ER_CONFIG1,         \
 		GPIO_ENET2_RX_DATA01_CONFIG4,     \
 		GPIO_ENET2_RX_DATA00_CONFIG5,     \

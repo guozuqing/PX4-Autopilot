@@ -1,0 +1,126 @@
+#!/bin/sh
+#
+# @name Coaxial Hexadecacopter X geometry (16 rotors)
+#
+# @type Octorotor Coaxial
+# @class Copter
+#
+# @output Motor 1  Upper
+# @output Motor 2  Upper
+# @output Motor 3  Upper
+# @output Motor 4  Upper
+# @output Motor 5  Upper
+# @output Motor 6  Upper
+# @output Motor 7  Upper
+# @output Motor 8  Upper
+# @output Motor 9  Lower (under M1)
+# @output Motor 10 Lower (under M2)
+# @output Motor 11 Lower (under M3)
+# @output Motor 12 Lower (under M4)
+# @output Motor 13 Lower (under M5)
+# @output Motor 14 Lower (under M6)
+# @output Motor 15 Lower (under M7)
+# @output Motor 16 Lower (under M8)
+#
+# @maintainer PX4 Development Team
+#
+# @board bitcraze_crazyflie exclude
+#
+
+. ${R}etc/init.d/rc.mc_defaults
+
+param set-default MAV_TYPE 14
+
+param set-default CA_ROTOR_COUNT 16
+
+# Upper M1
+param set-default CA_ROTOR0_PX 0.46
+param set-default CA_ROTOR0_PY 0.19
+param set-default CA_ROTOR0_PZ -0.05
+param set-default CA_ROTOR0_KM -0.05
+
+# Upper M2
+param set-default CA_ROTOR1_PX -0.46
+param set-default CA_ROTOR1_PY -0.19
+param set-default CA_ROTOR1_PZ -0.05
+param set-default CA_ROTOR1_KM -0.05
+
+# Upper M3
+param set-default CA_ROTOR2_PX 0.19
+param set-default CA_ROTOR2_PY 0.46
+param set-default CA_ROTOR2_PZ -0.05
+
+# Upper M4
+param set-default CA_ROTOR3_PX -0.46
+param set-default CA_ROTOR3_PY 0.19
+param set-default CA_ROTOR3_PZ -0.05
+
+# Upper M5
+param set-default CA_ROTOR4_PX 0.46
+param set-default CA_ROTOR4_PY -0.19
+param set-default CA_ROTOR4_PZ -0.05
+
+# Upper M6
+param set-default CA_ROTOR5_PX -0.19
+param set-default CA_ROTOR5_PY -0.46
+param set-default CA_ROTOR5_PZ -0.05
+
+# Upper M7
+param set-default CA_ROTOR6_PX 0.19
+param set-default CA_ROTOR6_PY -0.46
+param set-default CA_ROTOR6_PZ -0.05
+param set-default CA_ROTOR6_KM -0.05
+
+# Upper M8
+param set-default CA_ROTOR7_PX -0.19
+param set-default CA_ROTOR7_PY 0.46
+param set-default CA_ROTOR7_PZ -0.05
+param set-default CA_ROTOR7_KM -0.05
+
+# Lower M9 (under M1)
+param set-default CA_ROTOR8_PX 0.46
+param set-default CA_ROTOR8_PY 0.19
+param set-default CA_ROTOR8_PZ 0.05
+param set-default CA_ROTOR8_KM 0.05
+
+# Lower M10 (under M2)
+param set-default CA_ROTOR9_PX -0.46
+param set-default CA_ROTOR9_PY -0.19
+param set-default CA_ROTOR9_PZ 0.05
+param set-default CA_ROTOR9_KM 0.05
+
+# Lower M11 (under M3)
+param set-default CA_ROTOR10_PX 0.19
+param set-default CA_ROTOR10_PY 0.46
+param set-default CA_ROTOR10_PZ 0.05
+param set-default CA_ROTOR10_KM -0.05
+
+# Lower M12 (under M4)
+param set-default CA_ROTOR11_PX -0.46
+param set-default CA_ROTOR11_PY 0.19
+param set-default CA_ROTOR11_PZ 0.05
+param set-default CA_ROTOR11_KM -0.05
+
+# Lower M13 (under M5)
+param set-default CA_ROTOR12_PX 0.46
+param set-default CA_ROTOR12_PY -0.19
+param set-default CA_ROTOR12_PZ 0.05
+param set-default CA_ROTOR12_KM -0.05
+
+# Lower M14 (under M6)
+param set-default CA_ROTOR13_PX -0.19
+param set-default CA_ROTOR13_PY -0.46
+param set-default CA_ROTOR13_PZ 0.05
+param set-default CA_ROTOR13_KM -0.05
+
+# Lower M15 (under M7)
+param set-default CA_ROTOR14_PX 0.19
+param set-default CA_ROTOR14_PY -0.46
+param set-default CA_ROTOR14_PZ 0.05
+param set-default CA_ROTOR14_KM 0.05
+
+# Lower M16 (under M8)
+param set-default CA_ROTOR15_PX -0.19
+param set-default CA_ROTOR15_PY 0.46
+param set-default CA_ROTOR15_PZ 0.05
+param set-default CA_ROTOR15_KM 0.05
