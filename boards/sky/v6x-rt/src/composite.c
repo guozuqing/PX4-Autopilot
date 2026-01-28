@@ -50,6 +50,7 @@
 #include <nuttx/usb/cdcacm.h>
 #include <nuttx/usb/usbmsc.h>
 #include <nuttx/usb/composite.h>
+#include <sys/mount.h>
 
 #ifdef CONFIG_USBMSC_COMPOSITE
 static void *g_mschandle;
@@ -63,6 +64,14 @@ static int board_mscclassobject(int minor,
 	int ret;
 
 	DEBUGASSERT(g_mschandle == NULL);
+
+	/* Unmount SD card so MSC can access it */
+	syslog(LOG_INFO, "board_mscclassobject: Unmounting /fs/microsd\n");
+	ret = umount("/fs/microsd");
+	if (ret < 0) {
+		syslog(LOG_WARNING, "umount /fs/microsd failed: %d (may not be mounted)\n", -ret);
+		/* Continue anyway - might not be mounted */
+	}
 
 	syslog(LOG_INFO, "board_mscclassobject: Configuring NLUNS=1\n");
 	ret = usbmsc_configure(1, &g_mschandle);
