@@ -424,6 +424,8 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 #endif
 
+/* USB MSC可以通过NSH命令msconn手动启动 */
+
 #ifdef CONFIG_IMXRT_ENET
 	imxrt_netinitialize(0);
 #endif

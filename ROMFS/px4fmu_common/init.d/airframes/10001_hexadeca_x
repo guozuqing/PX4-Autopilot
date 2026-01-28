@@ -31,6 +31,40 @@
 
 param set-default MAV_TYPE 14
 
+# Enable PWM output on all 14 timers (400Hz)
+param set-default PWM_MAIN_TIM0 400
+param set-default PWM_MAIN_TIM1 400
+param set-default PWM_MAIN_TIM2 400
+param set-default PWM_MAIN_TIM3 400
+param set-default PWM_MAIN_TIM4 400
+param set-default PWM_MAIN_TIM5 400
+param set-default PWM_MAIN_TIM6 400
+param set-default PWM_MAIN_TIM7 400
+param set-default PWM_MAIN_TIM8 400
+param set-default PWM_MAIN_TIM9 400
+param set-default PWM_MAIN_TIM10 400
+param set-default PWM_MAIN_TIM11 400
+param set-default PWM_MAIN_TIM12 400
+param set-default PWM_MAIN_TIM13 400
+
+# Motor to channel mapping (Motor X -> output function 10X)
+param set-default PWM_MAIN_FUNC1 102
+param set-default PWM_MAIN_FUNC2 110
+param set-default PWM_MAIN_FUNC3 109
+param set-default PWM_MAIN_FUNC4 115
+param set-default PWM_MAIN_FUNC5 112
+param set-default PWM_MAIN_FUNC6 114
+param set-default PWM_MAIN_FUNC7 101
+param set-default PWM_MAIN_FUNC8 106
+param set-default PWM_MAIN_FUNC9 105
+param set-default PWM_MAIN_FUNC10 113
+param set-default PWM_MAIN_FUNC11 103
+param set-default PWM_MAIN_FUNC12 107
+param set-default PWM_MAIN_FUNC13 108
+param set-default PWM_MAIN_FUNC14 111
+param set-default PWM_MAIN_FUNC15 116
+param set-default PWM_MAIN_FUNC16 104
+
 param set-default CA_ROTOR_COUNT 16
 
 # Upper M1
@@ -124,3 +158,5 @@ param set-default CA_ROTOR15_PX -0.19
 param set-default CA_ROTOR15_PY 0.46
 param set-default CA_ROTOR15_PZ 0.05
 param set-default CA_ROTOR15_KM 0.05
+
+

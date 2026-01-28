@@ -1,6 +1,6 @@
 ############################################################################
 #
-#   Copyright (c) 2016, 2019, 2023 PX4 Development Team. All rights reserved.
+#   Copyright (c) 2024 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,69 +30,14 @@
 # POSSIBILITY OF SUCH DAMAGE.
 #
 ############################################################################
-if("${PX4_BOARD_LABEL}" STREQUAL  "bootloader")
-	add_compile_definitions(BOOTLOADER)
-	add_library(drivers_board
-		bootloader_main.c
-		init.c
-		usb.c
-		imxrt_flexspi_nor_boot.c
-		imxrt_flexspi_nor_flash.c
-		imxrt_clockconfig.c
-		timer_config.cpp
-	)
-	target_link_libraries(drivers_board
-		PRIVATE
-			nuttx_arch # sdio
-			nuttx_drivers # sdio
-			px4_layer #gpio
-			arch_io_pins # iotimer
-			arch_board_romapi
-			bootloader
-	)
-	target_include_directories(drivers_board PRIVATE ${PX4_SOURCE_DIR}/platforms/nuttx/src/bootloader/common)
 
-else()
-	if(CONFIG_IMXRT1170_FLEXSPI_FRAM)
-	    list(APPEND SRCS
-			imxrt_flexspi_fram.c
-	    )
-	endif()
-
-	px4_add_library(drivers_board
-		autoleds.c
-		automount.c
-		#can.c
-		composite.c
-		i2c.cpp
-		init.c
-		led.c
-		mtd.cpp
-		sdhc.c
-		spi.cpp
-		timer_config.cpp
-		usb.c
-		usbmsc.c
-		imxrt_flexspi_fram.c
-		imxrt_flexspi_nor_boot.c
-		imxrt_flexspi_nor_flash.c
-		imxrt_clockconfig.c
-		imxrt_ocram_initialize.c
-		${SRCS}
-	)
-
-	# Force compiler not to use builtin functions (like memcpy)
-	# to optimize for loops in init.c (imxrt_ocram_initialize)
-	set_source_files_properties(imxrt_ocram_initialize.c PROPERTIES COMPILE_FLAGS -fno-builtin)
-
-	target_link_libraries(drivers_board
-		PRIVATE
-			arch_board_hw_info
-			arch_board_romapi
-			arch_spi
-			drivers__led # drv_led_start
-			nuttx_arch # sdio
-			nuttx_drivers # sdio
-			px4_layer
-	)
-endif()
+px4_add_module(
+	MODULE modules__sd_ums_switch
+	MAIN sd_ums_switch
+	COMPILE_FLAGS
+	SRCS
+		SdUmsSwitch.cpp
+		SdUmsSwitch.hpp
+	DEPENDS
+		px4_work_queue
+)

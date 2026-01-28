@@ -32,11 +32,21 @@
 ############################################################################
 
 # NuttX CDCACM vendor and product strings
+# Use composite strings if in composite mode, otherwise use standalone CDCACM strings
 set(vendorstr_underscore)
 set(productstr_underscore)
-string(REPLACE " " "_" vendorstr_underscore ${CONFIG_CDCACM_VENDORSTR})
-string(REPLACE "," "_" vendorstr_underscore "${vendorstr_underscore}")
-string(REPLACE " " "_" productstr_underscore ${CONFIG_CDCACM_PRODUCTSTR})
+if(CONFIG_USBDEV_COMPOSITE AND CONFIG_COMPOSITE_VENDORSTR)
+	string(REPLACE " " "_" vendorstr_underscore ${CONFIG_COMPOSITE_VENDORSTR})
+	string(REPLACE "," "_" vendorstr_underscore "${vendorstr_underscore}")
+	string(REPLACE " " "_" productstr_underscore ${CONFIG_COMPOSITE_PRODUCTSTR})
+elseif(CONFIG_CDCACM_VENDORSTR)
+	string(REPLACE " " "_" vendorstr_underscore ${CONFIG_CDCACM_VENDORSTR})
+	string(REPLACE "," "_" vendorstr_underscore "${vendorstr_underscore}")
+	string(REPLACE " " "_" productstr_underscore ${CONFIG_CDCACM_PRODUCTSTR})
+else()
+	set(vendorstr_underscore "PX4")
+	set(productstr_underscore "FMU")
+endif()
 
 set(serial_ports)
 if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Linux")
