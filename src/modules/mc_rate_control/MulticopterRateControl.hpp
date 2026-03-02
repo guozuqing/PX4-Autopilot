@@ -107,8 +107,8 @@ private:
 	uORB::Publication<actuator_controls_status_s>	_actuator_controls_status_pub{ORB_ID(actuator_controls_status_0)};
 	uORB::PublicationMulti<rate_ctrl_status_s>	_controller_status_pub{ORB_ID(rate_ctrl_status)};
 	uORB::Publication<vehicle_rates_setpoint_s>	_vehicle_rates_setpoint_pub{ORB_ID(vehicle_rates_setpoint)};
-	uORB::Publication<vehicle_thrust_setpoint_s>	_vehicle_thrust_setpoint_pub;
 	uORB::Publication<vehicle_torque_setpoint_s>	_vehicle_torque_setpoint_pub;
+	uORB::Publication<vehicle_thrust_setpoint_s>	_vehicle_thrust_setpoint_pub;
 
 	vehicle_control_mode_s	_vehicle_control_mode{};
 	vehicle_status_s	_vehicle_status{};
@@ -163,6 +163,40 @@ private:
 		(ParamFloat<px4::params::MC_ACRO_SUPEXPO>) _param_mc_acro_supexpo,		/**< superexpo stick curve shape (roll & pitch) */
 		(ParamFloat<px4::params::MC_ACRO_SUPEXPOY>) _param_mc_acro_supexpoy,		/**< superexpo stick curve shape (yaw) */
 
-		(ParamBool<px4::params::MC_BAT_SCALE_EN>) _param_mc_bat_scale_en
+		(ParamBool<px4::params::MC_BAT_SCALE_EN>) _param_mc_bat_scale_en,
+
+		//----------------------------------------------------------
+		(ParamFloat<px4::params::RATE_ESOR_BETA1>) _param_rate_esor_beta1,
+		(ParamFloat<px4::params::RATE_ESOR_BETA2>) _param_rate_esor_beta2,
+		(ParamFloat<px4::params::RATE_ESOR_CETA1>) _param_rate_esor_ceta1,
+		(ParamFloat<px4::params::RATE_ESOR_CETA2>) _param_rate_esor_ceta2,
+		(ParamFloat<px4::params::RATE_ESOP_BETA1>) _param_rate_esop_beta1,
+		(ParamFloat<px4::params::RATE_ESOP_BETA2>) _param_rate_esop_beta2,
+		(ParamFloat<px4::params::RATE_ESOP_CETA1>) _param_rate_esop_ceta1,
+		(ParamFloat<px4::params::RATE_ESOP_CETA2>) _param_rate_esop_ceta2,
+		(ParamFloat<px4::params::RATE_ESOY_BETA1>) _param_rate_esoy_beta1,
+		(ParamFloat<px4::params::RATE_ESOY_BETA2>) _param_rate_esoy_beta2,
+		(ParamFloat<px4::params::RATE_ESOY_CETA1>) _param_rate_esoy_ceta1,
+		(ParamFloat<px4::params::RATE_ESOY_CETA2>) _param_rate_esoy_ceta2,
+		(ParamFloat<px4::params::RATE_ACT_T_R>) _param_rate_act_T_r,
+		(ParamFloat<px4::params::RATE_ACT_B_R>) _param_rate_act_b_r,
+		(ParamFloat<px4::params::RATE_ACT_T_P>) _param_rate_act_T_p,
+		(ParamFloat<px4::params::RATE_ACT_B_P>) _param_rate_act_b_p,
+		(ParamFloat<px4::params::RATE_ACT_T_Y>) _param_rate_act_T_y,
+		(ParamFloat<px4::params::RATE_ACT_B_Y>) _param_rate_act_b_y,
+
+		(ParamFloat<px4::params::RATE_TD_P1>) _param_rate_td_p1,
+		(ParamFloat<px4::params::RATE_TD_P2>) _param_rate_td_p2,
+		(ParamFloat<px4::params::RATE_TD_P3>) _param_rate_td_p3,
+
+		(ParamFloat<px4::params::RATE_FEED_R_P1>) _param_rate_feedr_p1,
+		(ParamFloat<px4::params::RATE_FEED_P_P1>) _param_rate_feedp_p1,
+		(ParamFloat<px4::params::RATE_FEED_Y_P1>) _param_rate_feedy_p1,
+		(ParamFloat<px4::params::RATE_FEED_R_P2>) _param_rate_feedr_p2,
+		(ParamFloat<px4::params::RATE_FEED_P_P2>) _param_rate_feedp_p2,
+		(ParamFloat<px4::params::RATE_FEED_Y_P2>) _param_rate_feedy_p2,
+
+		(ParamInt<px4::params::RATE_CTRL_MODE>) _param_rate_eso_ctrl_mode
+		//----------------------------------------------------------
 	)
 };

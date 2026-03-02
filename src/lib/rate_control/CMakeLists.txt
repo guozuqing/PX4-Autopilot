@@ -34,6 +34,10 @@
 px4_add_library(RateControl
 	rate_control.cpp
 	rate_control.hpp
+	eso_angular_rate.cpp
+	eso_angular_rate.hpp
+	rate_td.cpp
+	rate_td.hpp
 )
 target_compile_options(RateControl PRIVATE ${MAX_CUSTOM_OPT_LEVEL})
 target_include_directories(RateControl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

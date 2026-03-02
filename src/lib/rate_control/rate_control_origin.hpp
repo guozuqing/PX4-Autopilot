@@ -43,8 +43,6 @@
 
 #include <mathlib/mathlib.h>
 #include <uORB/topics/rate_ctrl_status.h>
-#include "eso_angular_rate.hpp"
-#include "rate_td.hpp"
 
 class RateControl
 {
@@ -59,13 +57,7 @@ public:
 	 * @param D 3D vector of derivative gains
 	 */
 	void setPidGains(const matrix::Vector3f &P, const matrix::Vector3f &I, const matrix::Vector3f &D);
-	//------------------------------------------------------------------------------------------
-    void setFeedbackGains(const matrix::Vector3f &FP1, const matrix::Vector3f &FP2);
-	void setActGains(const matrix::Vector3f &T, const matrix::Vector3f &b);
-	void setEsoGains(const matrix::Vector3f &beta1, const matrix::Vector3f &beta2, const matrix::Vector3f &ceta1, const matrix::Vector3f &ceta2);
-	void setTdGains(float P1, float P2, float P3);
-	void setRateCtrlMode(int eso_mode) { _rate_ctrl_mode = eso_mode; };
-	//------------------------------------------------------------------------------------------
+
 	/**
 	 * Set the mximum absolute value of the integrator for all axes
 	 * @param integrator_limit limit value for all axes x, y, z
@@ -137,30 +129,11 @@ private:
 	matrix::Vector3f _gain_d; ///< rate control derivative gain
 	matrix::Vector3f _lim_int; ///< integrator term maximum absolute value
 	matrix::Vector3f _gain_ff; ///< direct rate to torque feed forward gain only useful for helicopters
-	//------------------------------------------------------------------------------------------
-	matrix::Vector3f _feedback_p1; ///< rate control integral gain
-	matrix::Vector3f _feedback_p2; ///< rate control integral gain
-	//------------------------------------------------------------------------------------------
+
 	// States
 	matrix::Vector3f _rate_int; ///< integral term of the rate controller
 
 	// Feedback from control allocation
 	matrix::Vector<bool, 3> _control_allocator_saturation_negative;
 	matrix::Vector<bool, 3> _control_allocator_saturation_positive;
-
-	//------------------------------------------------------------------------------------------
-	matrix::Vector3f torque_acfly_setpoint;
-	matrix::Vector3f target_darate;
-
-	// Three-axis ESO observers for Roll, Pitch, Yaw
-	EsoAngularRate acfly_eso_roll;
-	EsoAngularRate acfly_eso_pitch;
-	EsoAngularRate acfly_eso_yaw;
-
-	// TD tracker for Roll/Pitch rate setpoint tracking
-	RateTd rate_td;
-
-	/* controller mode: 0 = PID, 1 = PD+ESO */
-	int _rate_ctrl_mode{0};
-	//------------------------------------------------------------------------------------------
 };

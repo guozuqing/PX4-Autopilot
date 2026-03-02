@@ -46,8 +46,8 @@ using math::radians;
 MulticopterRateControl::MulticopterRateControl(bool vtol) :
 	ModuleParams(nullptr),
 	WorkItem(MODULE_NAME, px4::wq_configurations::rate_ctrl),
-	_vehicle_thrust_setpoint_pub(vtol ? ORB_ID(vehicle_thrust_setpoint_virtual_mc) : ORB_ID(vehicle_thrust_setpoint)),
 	_vehicle_torque_setpoint_pub(vtol ? ORB_ID(vehicle_torque_setpoint_virtual_mc) : ORB_ID(vehicle_torque_setpoint)),
+	_vehicle_thrust_setpoint_pub(vtol ? ORB_ID(vehicle_thrust_setpoint_virtual_mc) : ORB_ID(vehicle_thrust_setpoint)),
 	_loop_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": cycle"))
 {
 	_vehicle_status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
@@ -84,6 +84,27 @@ MulticopterRateControl::parameters_updated()
 		rate_k.emult(Vector3f(_param_mc_rollrate_p.get(), _param_mc_pitchrate_p.get(), _param_mc_yawrate_p.get())),
 		rate_k.emult(Vector3f(_param_mc_rollrate_i.get(), _param_mc_pitchrate_i.get(), _param_mc_yawrate_i.get())),
 		rate_k.emult(Vector3f(_param_mc_rollrate_d.get(), _param_mc_pitchrate_d.get(), _param_mc_yawrate_d.get())));
+
+	//------------------------------------------------------------------------------------------
+	_rate_control.setFeedbackGains(
+		Vector3f(_param_rate_feedr_p1.get(), _param_rate_feedp_p1.get(), _param_rate_feedy_p1.get()),
+		Vector3f(_param_rate_feedr_p2.get(), _param_rate_feedp_p2.get(), _param_rate_feedy_p2.get()));
+
+	_rate_control.setEsoGains(
+		Vector3f(_param_rate_esor_beta1.get(), _param_rate_esop_beta1.get(), _param_rate_esoy_beta1.get()),
+		Vector3f(_param_rate_esor_beta2.get(), _param_rate_esop_beta2.get(), _param_rate_esoy_beta2.get()),
+		Vector3f(_param_rate_esor_ceta1.get(), _param_rate_esop_ceta1.get(), _param_rate_esoy_ceta1.get()),
+		Vector3f(_param_rate_esor_ceta2.get(), _param_rate_esop_ceta2.get(), _param_rate_esoy_ceta2.get()));
+
+	_rate_control.setActGains(
+		Vector3f(_param_rate_act_T_r.get(), _param_rate_act_T_p.get(), _param_rate_act_T_y.get()),
+	        Vector3f(_param_rate_act_b_r.get(), _param_rate_act_b_p.get(), _param_rate_act_b_y.get()));
+
+	_rate_control.setTdGains(
+		_param_rate_td_p1.get(), _param_rate_td_p2.get(), _param_rate_td_p3.get());
+
+	_rate_control.setRateCtrlMode(_param_rate_eso_ctrl_mode.get());
+	//------------------------------------------------------------------------------------------	
 
 	_rate_control.setIntegratorLimit(
 		Vector3f(_param_mc_rr_int_lim.get(), _param_mc_pr_int_lim.get(), _param_mc_yr_int_lim.get()));
