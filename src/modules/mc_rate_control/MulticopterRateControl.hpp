@@ -132,6 +132,8 @@ private:
 
 	AlphaFilter<float> _output_lpf_yaw;
 
+	int _last_rate_ctrl_mode{-1};
+
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::MC_ROLLRATE_P>) _param_mc_rollrate_p,
 		(ParamFloat<px4::params::MC_ROLLRATE_I>) _param_mc_rollrate_i,

@@ -96,87 +96,148 @@ void RateControl::setNegativeSaturationFlag(size_t axis, bool is_saturated)
 	}
 }
 
+// ==================== 角速度控制主函数 ====================
+// 每个控制周期(~250Hz)由 MulticopterRateControl::Run() 调用一次
+// 输入:
+//   rate          — 陀螺仪测量的实际角速度 [Roll, Pitch, Yaw] (rad/s)
+//   rate_sp       — 姿态控制器或ACRO模式给出的期望角速度 (rad/s)
+//   angular_accel — 角加速度估计值 (rad/s²)，仅传统PID的D项使用
+//   dt            — 本周期时间步长 (s)
+//   landed        — 着陆标志，着陆时会重置ESO/TD状态并简化控制律
+// 输出:
+//   torque_setpoint — 三轴力矩指令 → 控制分配器 → 电机
 Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, const Vector3f &angular_accel,
 			     const float dt, const bool landed)
 {
-	// angular rates error
+	// ========== 第①步：计算角速度误差（PID路径使用）==========
 	Vector3f rate_error = rate_sp - rate;
 
-	//------------------------------------------------------------------------------------------
-	acfly_eso_roll.run(rate(0), dt, landed);
-	acfly_eso_pitch.run(rate(1), dt, landed);
-	acfly_eso_yaw.run(rate(2), dt, landed);
+	// ========== 第②步：ESO 闭环校正 ==========
+	// 用本周期陀螺仪测量值修正上一周期的开环预测
+	// ESO内部流程: 计算观测误差(测量-8步前预测) → 自适应增益 → 校正z1/z2/历史队列
+	acfly_eso_roll.run(rate(0), dt, landed);   // Roll轴ESO闭环校正
+	acfly_eso_pitch.run(rate(1), dt, landed);  // Pitch轴ESO闭环校正
+	acfly_eso_yaw.run(rate(2), dt, landed);    // Yaw轴ESO闭环校正
 
+	// 获取ESO估计的角速度 z1 (rad/s)，用于控制律中的速度误差计算
 	float angular_rate_ESO_roll = acfly_eso_roll.getEstimatedAngularRate();
 	float angular_rate_ESO_pitch = acfly_eso_pitch.getEstimatedAngularRate();
 	float angular_rate_ESO_yaw = acfly_eso_yaw.getEstimatedAngularRate();
+
+	// 获取ESO估计的总角加速度 α = z_inertia + z2 (rad/s²)
+	// 其中 z_inertia 是执行器惯性响应，z2 是外部扰动
 	float angular_acceleration_ESO_roll = acfly_eso_roll.getEstimatedAngularAcceleration();
 	float angular_acceleration_ESO_pitch = acfly_eso_pitch.getEstimatedAngularAcceleration();
 	float angular_acceleration_ESO_yaw = acfly_eso_yaw.getEstimatedAngularAcceleration();
+
+	// 获取执行器惯性响应 z_inertia (rad/s²)，用于力矩输出的扰动补偿
 	float z_inertia_roll = acfly_eso_roll.getEstimatedMainPower();
 	float z_inertia_pitch = acfly_eso_pitch.getEstimatedMainPower();
-/* 	float z_inertia_yaw = acfly_eso_yaw.getEstimatedMainPower(); */
+	// Yaw轴启用惯性补偿，与Roll/Pitch统一（修复模型不匹配导致的z2发散）
+	float z_inertia_yaw = acfly_eso_yaw.getEstimatedMainPower();
 
 	Vector3f torque_setpoint{};
 
-	// ===== Roll axis: TD tracking and feedforward calculation =====
-	// Track Roll/Pitch rate setpoint with TD
+	// ========== 第③步：TD 跟踪微分器 — 平滑期望信号 ==========
+	// 将可能含阶跃的 rate_sp 变成平滑轨迹，避免直接跟踪引起振荡
+	// TD内部: 非线性增益 tanh() → 三层状态积分 x1/x2/x3
 	rate_td.track2(rate_sp, dt, landed);
-	// Get TD states for Roll axis
-	Vector3f td_x2 = rate_td.getX2();  // Tracked velocity
-	Vector3f td_x3 = rate_td.getX3();  // Tracked acceleration
+
+	// TD输出:
+	//   x2 — 平滑后的期望角速度 (rad/s)，用于控制律速度层
+	//   x3 — 期望角加速度 (rad/s²)，作为前馈和加速度层误差计算
+	Vector3f td_x2 = rate_td.getX2();  // 平滑期望角速度
+	Vector3f td_x3 = rate_td.getX3();  // 期望角加速度
+	// T4(期望jerk)已被注释，加速度层缺少jerk前馈项
 /* 	Vector3f td_T4 = rate_td.getT4();  // Tracked jerk */
-	// Calculate feedforward terms (ACFly: Tv1 and Tv2)
-	// Tv1 = Ps * (TD.x2 - angular_rate_ESO) + TD.x3
+	// ========== 第④步：单参数控制律 — 计算力矩指令 ==========
+	//
+	// 控制律分三层递进：
+	//   Tv1 (速度层)  → Tv2 (加速度层)  → Ta1 (合成) → torque (执行器反解)
+	//
+	// ---- 第一层：速度误差反馈 + 加速度前馈 ----
+	// Tv1 = P1 × (TD期望角速度 - ESO估计角速度) + TD期望角加速度
+	//       ──────────────────────────────────   ────────────────
+	//       速度误差 × 反馈增益                  加速度前馈
+	// 物理含义: "角速度差这么多，需要这么大的角加速度去追"
 	float Tv1_roll = _feedback_p1(0) * (td_x2(0) - angular_rate_ESO_roll) + td_x3(0);
 	float Tv1_pitch = _feedback_p1(1) * (td_x2(1) - angular_rate_ESO_pitch) + td_x3(1);
 	float Tv1_yaw = _feedback_p1(2) * (td_x2(2) - angular_rate_ESO_yaw) + td_x3(2);
 
-	// Tv2 = Ps * (TD.x3 - angular_acceleration_ESO) + TD.T4
-	// Since T4 is not directly exposed, we approximate using the tracking dynamics
-	// In ACFly this comes from the TD internal calculation
+	// ---- 第二层：加速度误差反馈 (+ jerk前馈，已注释) ----
+	// Tv2 = P2 × (TD期望角加速度 - ESO估计角加速度) [+ TD.T4]
+	// 物理含义: "角加速度差这么多，需要这么大的jerk去追"
+	// 注: T4(jerk前馈)被注释掉，可能为降低噪声敏感度
 	float Tv2_roll = _feedback_p2(0) * (td_x3(0) - angular_acceleration_ESO_roll)/*  + td_T4(0) */;
 	float Tv2_pitch = _feedback_p2(1) * (td_x3(1) - angular_acceleration_ESO_pitch)/*  + td_T4(1) */;
 	float Tv2_yaw = _feedback_p2(2) * (td_x3(2) - angular_acceleration_ESO_yaw)/*  + td_T4(2) */;
 
-	// Calculate Ta1 (total angular acceleration command)
-	// Ta1 = P2 * (Tv1 - angular_acceleration_ESO) + Tv2
+	// ---- 合成：总角加速度指令 ----
+	// Ta1 = P2 × (Tv1 - ESO估计角加速度) + Tv2
+	// 将速度层和加速度层的控制量叠加，得到最终需要的角加速度
 	float Ta1_roll = _feedback_p2(0) * (Tv1_roll - angular_acceleration_ESO_roll) + Tv2_roll;
 	float Ta1_pitch = _feedback_p2(1) * (Tv1_pitch - angular_acceleration_ESO_pitch) + Tv2_pitch;
 	float Ta1_yaw = _feedback_p2(2) * (Tv1_yaw - angular_acceleration_ESO_yaw) + Tv2_yaw;
 
+	// ---- 获取执行器模型参数 ----
+	// T: 执行器一阶惯性时间常数 (s)，描述电机+螺旋桨的响应延迟
+	// b: 控制输入到角加速度的增益 (rad/s²/归一化力矩)
 	float T_roll = acfly_eso_roll.getT();
 	float T_pitch = acfly_eso_pitch.getT();
-/* 	float T_yaw = acfly_eso_yaw.getT(); */
+	float T_yaw = acfly_eso_yaw.getT();
 
 	float b_roll = acfly_eso_roll.getB();
 	float b_pitch = acfly_eso_pitch.getB();
 	float b_yaw = acfly_eso_yaw.getB();
 
+	// b值保护: 防止除零，异常时回退到1.0（此时力矩输出=角加速度指令）
 	if (b_roll < 0.001f) { b_roll = 1.0f; }
 	if (b_pitch < 0.001f) { b_pitch = 1.0f; }
 	if (b_yaw < 0.001f) { b_yaw = 1.0f; }
 
-	// Calculate Roll axis torque using ESO control law with TD feedforward
+	// ---- 执行器模型反解：角加速度指令 → 归一化力矩 ----
+	// 飞行中: torque = (z_inertia + T × Ta1) / b
+	//   z_inertia: ESO估计的执行器惯性响应（扰动补偿）
+	//   T × Ta1:   考虑执行器延迟的角加速度指令（执行器反解）
+	//   / b:       增益归一化
+	// 着陆时: 去掉 z_inertia 扰动补偿项，防止地面状态下ESO扰动估计导致振荡
 	if (!landed) {
-		// In-flight: use full ESO control law with inertia compensation
+		// 飞行中: 完整控制律（惯性补偿 + 执行器反解）
+		// 公式: torque = (z_inertia + T × Ta1) / b
+		// z_inertia 项: 补偿执行器当前惯性响应（扰动前馈）
+		// T × Ta1 项:  考虑执行器延迟的角加速度指令（执行器反解）
 		torque_acfly_setpoint(0) = (z_inertia_roll + T_roll * Ta1_roll) / b_roll;
 		torque_acfly_setpoint(1) = (z_inertia_pitch + T_pitch * Ta1_pitch) / b_pitch;
-/* 		torque_acfly_setpoint(2) = (z_inertia_yaw + T_yaw * Ta1_yaw) / b_yaw; */
-		torque_acfly_setpoint(2) = Ta1_yaw / b_yaw;
+		torque_acfly_setpoint(2) = (z_inertia_yaw + T_yaw * Ta1_yaw) / b_yaw;
 	} else {
-		// Landed: simplified control without inertia compensation
+		// 着陆时: 去掉 z_inertia 扰动补偿项，防止地面状态下ESO扰动估计导致振荡
 		torque_acfly_setpoint(0) = T_roll * Ta1_roll / b_roll;
 		torque_acfly_setpoint(1) = T_pitch * Ta1_pitch / b_pitch;
-/* 		torque_acfly_setpoint(2) = T_yaw * Ta1_yaw / b_yaw; */
-		torque_acfly_setpoint(2) = Ta1_yaw / b_yaw;
+		torque_acfly_setpoint(2) = T_yaw * Ta1_yaw / b_yaw;
 	}
 
-	//------------------------------------------------------------------------------------------
-	// PID control with feed forward
+	// 安全限幅: ESO力矩输出限制在[-1, 1]范围内
+	// 防止z2发散或参数异常导致力矩输出超出控制分配器范围
+	for (int i = 0; i < 3; i++) {
+		torque_acfly_setpoint(i) = math::constrain(torque_acfly_setpoint(i), -1.0f, 1.0f);
+	}
+
+	// ========== 第⑤步：传统 PID 并行计算 ==========
+	// torque_pid = Kp×误差 + 积分 - Kd×角加速度 + Kff×前馈
+	// PID始终运行，与ESO路径并行，以便随时可切换回传统模式
 	const Vector3f torque = _gain_p.emult(rate_error) + _rate_int - _gain_d.emult(angular_accel) + _gain_ff.emult(rate_sp);
 
-	//------------------------------------------------------------------------------------------
+	// ========== 第⑥步：模式选择器 — 决定每轴使用 ESO 还是 PID ==========
+	// RATE_CTRL_MODE 参数控制，支持逐轴递进验证
+	// 设计意图: 先在单轴调通ESO，确认效果后逐步扩展，降低调试风险
+	//
+	//   模式0: 全PID (传统模式，安全回退)
+	//   模式1: Roll=ESO, Pitch=PID, Yaw=PID (Roll单轴验证)
+	//   模式2: Roll=PID, Pitch=ESO, Yaw=PID (Pitch单轴验证)
+	//   模式3: Roll=PID, Pitch=PID, Yaw=ESO (Yaw单轴验证)
+	//   模式4: Roll=ESO, Pitch=ESO, Yaw=PID (双轴验证)
+	//   模式5: Roll=ESO, Pitch=ESO, Yaw=ESO (全ESO)
+	//
 /* 	if (_rate_ctrl_mode == 0) {
 		// PID mode: all axes use PID output
 		torque_setpoint = torque;
@@ -187,53 +248,59 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 		torque_setpoint(2) = torque(2);  // Yaw uses PID
 	} */
 	if (_rate_ctrl_mode == 0) {
-		// PID mode: all axes use PID output
+		// 模式0: 全部使用PID输出
 		torque_setpoint = torque;
 		target_darate = torque_setpoint;
-	} 
+	}
 	else if (_rate_ctrl_mode == 1) {
-		torque_setpoint(0) = torque_acfly_setpoint(0);   // Roll uses ESO
-		torque_setpoint(1) = torque(1);  // Pitch uses PID
-		torque_setpoint(2) = torque(2);  // Yaw uses PID
+		torque_setpoint(0) = torque_acfly_setpoint(0);   // Roll使用ESO
+		torque_setpoint(1) = torque(1);                  // Pitch使用PID
+		torque_setpoint(2) = torque(2);                  // Yaw使用PID
 	}
 	else if (_rate_ctrl_mode == 2) {
-		torque_setpoint(0) = torque(0);   // Roll uses ESO
-		torque_setpoint(1) = torque_acfly_setpoint(1);   // Pitch uses ESO
-		torque_setpoint(2) = torque(2);   // Yaw uses ESO
+		torque_setpoint(0) = torque(0);                  // Roll使用PID
+		torque_setpoint(1) = torque_acfly_setpoint(1);   // Pitch使用ESO
+		torque_setpoint(2) = torque(2);                  // Yaw使用PID
 	}
 	else if (_rate_ctrl_mode == 3) {
-		torque_setpoint(0) = torque(0);   // Roll uses ESO
-		torque_setpoint(1) = torque(1);   // Pitch uses ESO
-		torque_setpoint(2) = torque_acfly_setpoint(2);   // Yaw uses ESO
+		torque_setpoint(0) = torque(0);                  // Roll使用PID
+		torque_setpoint(1) = torque(1);                  // Pitch使用PID
+		torque_setpoint(2) = torque_acfly_setpoint(2);   // Yaw使用ESO
 	}
 	else if (_rate_ctrl_mode == 4) {
-		torque_setpoint(0) = torque_acfly_setpoint(0);   // Roll uses ESO
-		torque_setpoint(1) = torque_acfly_setpoint(1);   // Pitch uses ESO
-		torque_setpoint(2) = torque(2);   // Yaw uses ESO
+		torque_setpoint(0) = torque_acfly_setpoint(0);   // Roll使用ESO
+		torque_setpoint(1) = torque_acfly_setpoint(1);   // Pitch使用ESO
+		torque_setpoint(2) = torque(2);                  // Yaw使用PID
 	}
 	else if (_rate_ctrl_mode == 5) {
-		torque_setpoint(0) = torque_acfly_setpoint(0);   // Roll uses ESO
-		torque_setpoint(1) = torque_acfly_setpoint(1);   // Pitch uses ESO
-		torque_setpoint(2) = torque_acfly_setpoint(2);   // Yaw uses ESO
+		torque_setpoint(0) = torque_acfly_setpoint(0);   // Roll使用ESO
+		torque_setpoint(1) = torque_acfly_setpoint(1);   // Pitch使用ESO
+		torque_setpoint(2) = torque_acfly_setpoint(2);   // Yaw使用ESO
 	}
 	else {
-		// Default to PID if mode is unrecognized
+		// 未知模式: 安全回退到全PID
 		torque_setpoint = torque;
 		target_darate = torque_setpoint;
 	}
-	//------------------------------------------------------------------------------------------
-	// update integral only if we are not landed
+	// ========== 第⑦步：更新PID积分器（仅飞行中）==========
+	// 积分器有三重保护:
+	//   1. 控制分配饱和反馈 — 输出饱和时停止积分
+	//   2. 非线性衰减 — 大误差时积分自动弱化
+	//   3. 硬限幅 — constrain(-lim, +lim)
+	// 注意: 所有模式下积分器都在运行，即使某轴使用ESO
 	if (!landed) {
 		updateIntegral(rate_error, dt);
 	}
 
-	//------------------------------------------------------------------------------------------
-	// Update control input for Roll axis ESO observer
-	// Both mode 0 (PID) and mode 1 (hybrid) update ESO for status reporting
+	// ========== 第⑧步：ESO 开环预测 — 为下一周期做准备 ==========
+	// 将本周期最终输出的力矩告诉ESO，ESO据此预测下一周期的状态:
+	//   z_inertia += dt/T × (b×u - z_inertia)  // 执行器惯性模型
+	//   z1 += (z_inertia + z2) × dt            // 角速度开环预测
+	// 下一次 run() 被调用时，ESO会用新的陀螺仪测量值校正这个预测，形成闭环
+	// 注意: 所有模式下都更新ESO（包括纯PID模式），保持ESO状态热备
 	acfly_eso_roll.updateControlInput(torque_setpoint(0));
 	acfly_eso_pitch.updateControlInput(torque_setpoint(1));
 	acfly_eso_yaw.updateControlInput(torque_setpoint(2));
-	//------------------------------------------------------------------------------------------
 
 	return torque_setpoint;
 }

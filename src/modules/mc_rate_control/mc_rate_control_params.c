@@ -310,13 +310,21 @@ PARAM_DEFINE_FLOAT(MC_YAW_TQ_CUTOFF, 2.f);
 /**
  * Rate control mode selection
  *
- * 0: PID only (traditional for all axes)
- * 1: Hybrid mode (Roll uses ESO, Pitch/Yaw use PID)
+ * 0: PID only (all axes)
+ * 1: Roll=ESO, Pitch=PID, Yaw=PID
+ * 2: Roll=PID, Pitch=ESO, Yaw=PID
+ * 3: Roll=PID, Pitch=PID, Yaw=ESO
+ * 4: Roll=ESO, Pitch=ESO, Yaw=PID
+ * 5: Roll=ESO, Pitch=ESO, Yaw=ESO
  *
  * @min 0
- * @max 1
- * @value 0 PID mode (all axes)
- * @value 1 Hybrid mode (Roll ESO + Pitch/Yaw PID)
+ * @max 5
+ * @value 0 PID (all axes)
+ * @value 1 Roll=ESO, Pitch=PID, Yaw=PID
+ * @value 2 Roll=PID, Pitch=ESO, Yaw=PID
+ * @value 3 Roll=PID, Pitch=PID, Yaw=ESO
+ * @value 4 Roll=ESO, Pitch=ESO, Yaw=PID
+ * @value 5 Roll=ESO, Pitch=ESO, Yaw=ESO
  * @group Multicopter Rate Control
  */
 PARAM_DEFINE_INT32(RATE_CTRL_MODE, 0);
