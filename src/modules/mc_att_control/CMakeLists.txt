@@ -43,7 +43,9 @@ px4_add_module(
 		mc_att_control.hpp
 	DEPENDS
 		AttitudeControl
+		circuit_breaker
 		mathlib
+		RateControl
 		px4_work_queue
 		StickYaw
 	)

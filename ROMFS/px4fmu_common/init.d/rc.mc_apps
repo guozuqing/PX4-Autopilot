@@ -11,12 +11,8 @@
 control_allocator start
 
 #
-# Start Multicopter Rate Controller.
-#
-mc_rate_control start
-
-#
-# Start Multicopter Attitude Controller.
+# Start Multicopter Attitude + Rate Controller (merged).
+# mc_rate_control is no longer needed — rate control is now inside mc_att_control.
 #
 mc_att_control start
 

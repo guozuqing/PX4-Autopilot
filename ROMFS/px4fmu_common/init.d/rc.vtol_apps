@@ -14,7 +14,7 @@ airspeed_selector start
 
 vtol_att_control start
 
-mc_rate_control start vtol
+# mc_rate_control is no longer needed — rate control is now inside mc_att_control.
 mc_att_control start vtol
 flight_mode_manager start
 mc_pos_control start vtol
