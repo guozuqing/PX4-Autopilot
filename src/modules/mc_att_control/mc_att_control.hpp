@@ -167,6 +167,7 @@ private:
 	AlphaFilter<float> _man_pitch_input_filter;
 
 	hrt_abstime _last_run{0};
+	hrt_abstime _last_att_update{0};    ///< throttle AttitudeControl+TD to 100Hz
 	hrt_abstime _last_attitude_setpoint{0};
 
 	bool _spooled_up{false}; ///< used to make sure the vehicle cannot take off during the spoolup time

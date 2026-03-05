@@ -350,7 +350,9 @@ MulticopterAttitudeControl::Run()
 			}
 		}
 
-		// ==================== Attitude control ====================
+		// ==================== Attitude control (throttled to 100Hz) ====================
+		// v_att is read every cycle, but _attitude_control.update() + TD only run at 100Hz.
+		// Between updates, _rates_setpoint holds its last computed value for the 400Hz rate loop.
 		vehicle_attitude_s v_att;
 
 		if (_vehicle_attitude_sub.update(&v_att)) {
@@ -410,32 +412,41 @@ MulticopterAttitudeControl::Run()
 					_quat_reset_counter = v_att.quat_reset_counter;
 				}
 
-				Vector3f rates_sp = _attitude_control.update(q, dt, _maybe_landed || _landed);
-
+				// ---- 100Hz throttle: only run attitude controller + TD at 100Hz ----
 				const hrt_abstime now_att = hrt_absolute_time();
-				autotune_attitude_control_status_s pid_autotune;
 
-				if (_autotune_attitude_control_status_sub.copy(&pid_autotune)) {
-					if ((pid_autotune.state == autotune_attitude_control_status_s::STATE_ROLL
-					     || pid_autotune.state == autotune_attitude_control_status_s::STATE_PITCH
-					     || pid_autotune.state == autotune_attitude_control_status_s::STATE_YAW
-					     || pid_autotune.state == autotune_attitude_control_status_s::STATE_TEST)
-					    && ((now_att - pid_autotune.timestamp) < 1_s)) {
-						rates_sp += Vector3f(pid_autotune.rate_sp);
+				if (hrt_elapsed_time(&_last_att_update) >= 10000) { // 10ms = 100Hz
+					_last_att_update = now_att;
+
+					// Compute attitude dt based on actual att update interval
+					const float att_dt = math::constrain(dt * 4.0f, 0.005f, 0.02f); // ~10ms at 100Hz
+
+					Vector3f rates_sp = _attitude_control.update(q, att_dt, _maybe_landed || _landed);
+
+					autotune_attitude_control_status_s pid_autotune;
+
+					if (_autotune_attitude_control_status_sub.copy(&pid_autotune)) {
+						if ((pid_autotune.state == autotune_attitude_control_status_s::STATE_ROLL
+						     || pid_autotune.state == autotune_attitude_control_status_s::STATE_PITCH
+						     || pid_autotune.state == autotune_attitude_control_status_s::STATE_YAW
+						     || pid_autotune.state == autotune_attitude_control_status_s::STATE_TEST)
+						    && ((now_att - pid_autotune.timestamp) < 1_s)) {
+							rates_sp += Vector3f(pid_autotune.rate_sp);
+						}
 					}
+
+					// Update rate setpoint from attitude controller output
+					_rates_setpoint = rates_sp;
+
+					// publish rate setpoint for logging
+					vehicle_rates_setpoint_s rates_setpoint_msg{};
+					rates_setpoint_msg.roll = rates_sp(0);
+					rates_setpoint_msg.pitch = rates_sp(1);
+					rates_setpoint_msg.yaw = rates_sp(2);
+					_thrust_setpoint_body.copyTo(rates_setpoint_msg.thrust_body);
+					rates_setpoint_msg.timestamp = hrt_absolute_time();
+					_vehicle_rates_setpoint_pub.publish(rates_setpoint_msg);
 				}
-
-				// Update rate setpoint from attitude controller output
-				_rates_setpoint = rates_sp;
-
-				// publish rate setpoint for logging
-				vehicle_rates_setpoint_s rates_setpoint_msg{};
-				rates_setpoint_msg.roll = rates_sp(0);
-				rates_setpoint_msg.pitch = rates_sp(1);
-				rates_setpoint_msg.yaw = rates_sp(2);
-				_thrust_setpoint_body.copyTo(rates_setpoint_msg.thrust_body);
-				rates_setpoint_msg.timestamp = hrt_absolute_time();
-				_vehicle_rates_setpoint_pub.publish(rates_setpoint_msg);
 
 			} else {
 				_man_roll_input_filter.reset(0.f);
@@ -503,10 +514,10 @@ MulticopterAttitudeControl::Run()
 			const Vector3f td_rate_sp = _attitude_control.getTdRateSp();
 			const Vector3f td_rate_accel = _attitude_control.getTdRateAccel();
 
-			// Run rate controller
+			// Run rate controller (pass gyro timestamp_sample for ESO delay alignment)
 			Vector3f torque_setpoint =
 				_rate_control.update(rates, _rates_setpoint, angular_accel, dt, _maybe_landed || _landed,
-						     td_rate_sp, td_rate_accel);
+						     td_rate_sp, td_rate_accel, angular_velocity.timestamp_sample);
 
 			// Yaw torque low-pass filter
 			torque_setpoint(2) = _output_lpf_yaw.update(torque_setpoint(2), dt);

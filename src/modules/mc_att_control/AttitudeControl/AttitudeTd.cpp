@@ -77,11 +77,13 @@ void AttitudeTd::reset()
 }
 
 // ==================== 4阶TD跟踪微分器 ====================
-// 输入: euler_d — 期望欧拉角 [roll_d, pitch_d, yaw_d] (rad)
+// 输入: ref_d — 旋转向量 (body frame) [rad]
+//   ref_d = 2 × canonical(q⁻¹ × qd).imag()
+//   在小角度下 ≈ 姿态误差角度, 时间导数 ≈ 机体系角速度
 // 四层状态:
-//   _x1 — 平滑后的期望角度 (rad)，给姿态P控制器使用
-//   _x2 — 期望角速度 (rad/s)，给角速度控制器使用
-//   _x3 — 期望角加速度 (rad/s²)，给角速度控制器使用
+//   _x1 — 平滑旋转向量 (rad)，rate_sp = Kp × x1 即姿态P修正
+//   _x2 — 期望机体角速度 (rad/s)，直接给ESO (无需W变换)
+//   _x3 — 期望机体角加速度 (rad/s²)，直接给ESO (无需Ẇ计算)
 //   _x4 — jerk (rad/s³)，不使用
 //   _T5 — snap，驱动信号
 //
@@ -90,11 +92,11 @@ void AttitudeTd::reset()
 //   x2' = x3
 //   x3' = x4
 //   x4' = T5
-void AttitudeTd::track(const Vector3f &euler_d, float dt, bool landed)
+void AttitudeTd::track(const Vector3f &ref_d, float dt, bool landed)
 {
 	if (landed || !_initialized) {
 		// Initialize x1 to current input to avoid jump at takeoff
-		_x1 = euler_d;
+		_x1 = ref_d;
 		_x2.zero();
 		_x3.zero();
 		_x4.zero();
@@ -106,10 +108,10 @@ void AttitudeTd::track(const Vector3f &euler_d, float dt, bool landed)
 		return;
 	}
 
-	// ========== 第一层：角度跟踪 ==========
-	// e1 = euler_d - x1 (角度误差)
-	Vector3f e1 = euler_d - _x1;
-	Vector3f e1_dot = -_x2; // de1/dt = -x2 (euler_d视为常数)
+	// ========== 第一层：旋转向量跟踪 ==========
+	// e1 = ref_d - x1 (旋转向量误差)
+	Vector3f e1 = ref_d - _x1;
+	Vector3f e1_dot = -_x2; // de1/dt = -x2 (ref_d视为常数)
 
 	float e1_len = safeSqrt(e1.norm_squared());
 	float e1_dot_scalar = 0.0f;

@@ -68,182 +68,169 @@ void EsoAngularRate::reset()
 	_err_sign = false;
 	_err_continues_time = 0.0f;
 	_dt = 0.0f;
+	_takeoff_time = 0.0f;
+	_his_head = 0;
 
-	// Clear history buffer
-	for (uint8_t i = 0; i < ESO_ANGULAR_RATE_HIS_LENGTH; ++i) {
-		_his_z1[i] = 0.0f;
+	for (uint8_t i = 0; i < ESO_HIS_BUF_LEN; ++i) {
+		_his_buf[i].timestamp_us = 0;
+		_his_buf[i].z1 = 0.0f;
 	}
 }
 
-void EsoAngularRate::updateControlInput(float u)
+void EsoAngularRate::updateControlInput(float u_actual, hrt_abstime timestamp_us)
 {
-	_u = u;
+	_u = u_actual;
 
-	// Update inertia state: z_inertia' = (1/T) * (b*u - z_inertia)
-	// This models a first-order actuator response
+	// Actuator inertia model: z_inertia' = (b*u_actual - z_inertia) / T
+	// Uses ACTUAL applied torque, not desired — prevents model divergence on saturation
 	_z_inertia += _dt * _inv_T * (_b * _u - _z_inertia);
 
-	// Open-loop prediction of angular velocity: z1' = z_inertia + z2
+	// Open-loop prediction: z1' = z_inertia + z2
 	_z1 += _dt * (_z_inertia + _z2);
+
+	// Store (timestamp, z1) in ring buffer for delay compensation
+	_his_buf[_his_head].timestamp_us = timestamp_us;
+	_his_buf[_his_head].z1 = _z1;
+	_his_head = (_his_head + 1) % ESO_HIS_BUF_LEN;
 }
 
-// ==================== ESO 闭环校正（每周期调用一次）====================
-// 输入:
-//   v       — 陀螺仪测量的当前角速度 (rad/s)
-//   dt      — 时间步长 (s)
-//   landed  — 着陆标志，着陆时重置所有ESO状态
-// 返回:
-//   _z2     — 扰动估计值 (rad/s²)
-//
-// ESO 的核心思想:
-//   用「测量值 vs 历史预测值」的偏差来修正内部状态
-//   8步历史队列补偿陀螺仪滤波延迟
-//   自适应增益应对突变扰动
-float EsoAngularRate::run(float v, float dt, bool landed)
+float EsoAngularRate::lookupZ1AtTimestamp(hrt_abstime timestamp_us) const
 {
-	// 着陆时: 保持z1跟踪陀螺仪测量值，清零其他状态
-	// 不能用reset()全部清零，否则起飞瞬间z1=0 vs 实际角速度≠0 → 巨大观测误差 → 发散
-	if (landed)
-	{
-	    _z1 = v;  // z1跟踪测量值，起飞时无跳变
-	    _z2 = 0.0f;
-	    _z_inertia = 0.0f;
-	    _u = 0.0f;
-	    _last_err = 0.0f;
-	    _err_sign = false;
-	    _err_continues_time = 0.0f;
-	    _dt = dt;
-	    for (uint8_t i = 0; i < ESO_ANGULAR_RATE_HIS_LENGTH; ++i) {
-		    _his_z1[i] = v;  // 历史队列也初始化为测量值
-	    }
-	    return _z2;
+	// Find the buffer entry whose timestamp is closest to (but ≤) timestamp_us.
+	// Ring buffer may not be full initially, so skip entries with timestamp_us == 0.
+	float best_z1 = _z1;
+	hrt_abstime best_dt = UINT64_MAX;
+
+	for (uint8_t i = 0; i < ESO_HIS_BUF_LEN; ++i) {
+		if (_his_buf[i].timestamp_us == 0) {
+			continue;
+		}
+
+		// Absolute time difference (handles wrap-around for practical purposes)
+		hrt_abstime diff;
+
+		if (_his_buf[i].timestamp_us <= timestamp_us) {
+			diff = timestamp_us - _his_buf[i].timestamp_us;
+
+		} else {
+			diff = _his_buf[i].timestamp_us - timestamp_us;
+		}
+
+		if (diff < best_dt) {
+			best_dt = diff;
+			best_z1 = _his_buf[i].z1;
+		}
 	}
-	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	  模块1: 计算观测误差
-	  用陀螺仪测量值与8步前的预测值做比较
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-	// err: 角速度观测误差 = 陀螺仪测量值 - 8步前的历史估计值
-	// 为什么用8步前? 因为陀螺仪到ESO之间有滤波延迟(约8个采样周期)
-	// 用延迟匹配的历史值比较，才能得到准确的误差
-	float err = v - _his_z1[0];
 
-	// z2_err: 误差的变化量(类似jerk误差)
-	// 用于驱动扰动估计 z2 的校正
-	float z2_err = err - _last_err;
+	return best_z1;
+}
 
-
-	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	  模块2: 自适应增益调整
-	  原理: 误差持续同方向越久 → 可能有未补偿的扰动 → 增大增益加快跟踪
-	  检测方式: 监测z2_err的符号是否翻转
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-	// 检测误差方向是否翻转
-	if ((z2_err > 0.0f) != _err_sign) {
-		_err_continues_time = 0.0f;      // 方向翻转 → 重置持续时间计数
-		_err_sign = (z2_err > 0.0f);     // 更新当前符号
-	} else if (_saturated) {
-		// Anti-windup: 控制分配饱和时冻结自适应累积时间
-		// 饱和意味着实际执行力矩 < 指令力矩，继续放大β₂只会加剧内部状态漂移
-		// 类似PID的anti-windup: 饱和时停止积分
+// ==================== ESO closed-loop correction ====================
+float EsoAngularRate::run(float v, float dt, bool landed, hrt_abstime timestamp_sample)
+{
+	if (landed) {
+		_z1 = v;
+		_z2 = 0.0f;
+		_z_inertia = 0.0f;
+		_u = 0.0f;
+		_last_err = 0.0f;
+		_err_sign = false;
 		_err_continues_time = 0.0f;
+		_dt = dt;
+		_takeoff_time = 0.0f;
+		_his_head = 0;
+
+		for (uint8_t i = 0; i < ESO_HIS_BUF_LEN; ++i) {
+			_his_buf[i].timestamp_us = 0;
+			_his_buf[i].z1 = v;
+		}
+
+		return _z2;
+	}
+
+	// Takeoff protection: freeze z2 for first 1 second after takeoff
+	// Ground effect, gravity compensation transient, airflow — huge disturbances
+	_takeoff_time += dt;
+
+	if (_takeoff_time < 1.0f) {
+		// During takeoff: only track z1, keep z2=0
+		_z2 = 0.0f;
+		_last_err = 0.0f;
+		_err_continues_time = 0.0f;
+		_dt = dt;
+		return _z2;
+	}
+
+	// ---- Module 1: Observation error using timestamp-aligned z1 prediction ----
+	// Look up the z1 prediction that matches the gyro's actual sample time.
+	// This replaces the old fixed 8-step assumption with proper time alignment.
+	float z1_at_sample = lookupZ1AtTimestamp(timestamp_sample);
+	float err = v - z1_at_sample;
+
+	// ---- Module 2: Adaptive gain adjustment ----
+	// Track whether error stays same-sign for adaptive β₂ scaling
+	bool any_saturated = _saturated_positive || _saturated_negative;
+
+	if ((err > 0.0f) != _err_sign) {
+		_err_continues_time = 0.0f;
+		_err_sign = (err > 0.0f);
+
+	} else if (any_saturated) {
+		// Anti-windup: freeze adaptive scaling during saturation
+		_err_continues_time = 0.0f;
+
 	} else {
-		_err_continues_time += dt;       // 同方向持续 → 累加时间
-		// 安全限幅: 持续时间上限2秒，防止t³项在长时间同向误差下增长过快
+		_err_continues_time += dt;
 		_err_continues_time = math::min(_err_continues_time, 2.0f);
 	}
 
-
-	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	  模块3: 计算增益缩放因子
-	  公式: scale = 1 + ζ × t³
-	  t 越大(误差同方向持续越久) → scale 越大 → 增益越大 → 跟踪越快
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-	// β₁自适应上限: 防止 β₁×scale 超过0.9导致不稳定
-	float max_beta1_scale = 0.9f / _beta1;
-	// t³: 持续时间的立方，使增益在初期缓慢增长、后期快速增长
+	// ---- Module 3: Gain scaling ----
+	float max_beta1_scale = (_beta1 > 1e-6f) ? (0.9f / _beta1) : 15.0f;
 	float err_continues_time3 = _err_continues_time * _err_continues_time * _err_continues_time;
 
-	// β₁缩放: 角速度校正增益的自适应（当前被0.0f禁用，始终=1.0）
-	// 禁用原因: β₁自适应容易引入噪声放大，保守设计
-	float beta1_scale = 1.0f + 0.0f * _ceta1 * err_continues_time3;
-
-	// β₂缩放: 扰动校正增益的自适应（启用）
-	// 误差持续同方向越久 → β₂越大 → 扰动跟踪越快
+	float beta1_scale = 1.0f; // β₁ adaptive disabled
 	float beta2_scale = 1.0f + _ceta2 * err_continues_time3;
 
-	// 限幅防止增益过大导致振荡
-	// β₁: 最大15倍或不超过0.9/β₁
-	// β₂: 最大5倍
 	beta1_scale = math::constrain(beta1_scale, 1.0f, math::min(15.0f, max_beta1_scale));
 	beta2_scale = math::constrain(beta2_scale, 1.0f, 5.0f);
 
-
-	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	  模块4: 计算状态校正量
-	  z1_correction: 角速度估计的校正量
-	  z2_correction: 扰动估计的校正量
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-	// 角速度校正量 = 自适应β₁ × 观测误差
+	// ---- Module 4: Compute corrections (standard LADRC) ----
+	// Standard 2nd-order ESO:
+	//   z1_dot = z_inertia + z2 + β₁·err     (done in updateControlInput + correction here)
+	//   z2_dot = β₂·err                       (disturbance driven by err, not err-derivative)
 	float z1_correction = beta1_scale * _beta1 * err;
-	// 扰动校正量 = 自适应β₂ × 误差变化量
-	float z2_correction = beta2_scale * _beta2 * z2_err;
+	float z2_correction = beta2_scale * _beta2 * err * dt;
 
-	// 预扣除z2校正对历史队列的累积影响
-	// 原因: 下面的循环会给每个历史值加上 filter_dt × z2_correction
-	//       总累积 = (1+2+...+8)×dt×z2_correction = 8×dt×z2_correction (在循环中逐步加)
-	//       这里预先减去 8×dt×z2_correction，保证z1_correction的净效果正确
-	z1_correction -= z2_correction * ESO_ANGULAR_RATE_HIS_LENGTH * dt;
+	// Rate-limit z2 correction per step
+	float z2_correction_limit = Z2_LIMIT * dt;
+	z2_correction = math::constrain(z2_correction, -z2_correction_limit, z2_correction_limit);
 
-
-	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	  模块5: 回溯更新历史观测队列
-	  延迟补偿核心: 不仅校正当前估计，还回溯修正所有历史值
-	  队列结构: his_z1[0]=t-8步, his_z1[1]=t-7步, ..., his_z1[7]=当前
-	  每个历史值需要:
-	    ① 前移一位 (his_z1[k] = his_z1[k+1])
-	    ② 加上基础校正量 z1_correction
-	    ③ 加上扰动的时间积分 filter_dt × z2_correction
-	       (距当前越近，扰动累积影响越大)
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-	float filter_dt = dt;  // 累积时间偏移量，从1步开始
-
-	// 遍历历史队列 [0..6]，不含最新值 his_z1[7]
-	for (uint8_t k = 0; k < ESO_ANGULAR_RATE_HIS_LENGTH - 1; ++k) {
-		// 前移 + 基础校正 + 扰动时间积分
-		// filter_dt 依次为: dt, 2dt, 3dt, ..., 7dt
-		_his_z1[k] = _his_z1[k + 1] + z1_correction + filter_dt * z2_correction;
-		filter_dt += dt;  // 累加时间偏移
+	// ---- PID-style directional clamping for z2 (anti-windup) ----
+	// Same logic as PX4 PID updateIntegral():
+	//   positive saturation → don't let z2 grow more positive
+	//   negative saturation → don't let z2 grow more negative
+	if (_saturated_positive) {
+		z2_correction = math::min(z2_correction, 0.0f);
 	}
 
+	if (_saturated_negative) {
+		z2_correction = math::max(z2_correction, 0.0f);
+	}
 
-	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	  模块6: 更新当前观测状态
-	  将校正量应用到ESO的核心状态变量
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-	// 更新扰动估计 z2 (rad/s²)
+	// ---- Module 5: Update states ----
+	// With timestamp-based lookup, we no longer need to back-propagate corrections
+	// through a history queue. The ring buffer entries are predictions that were
+	// correct at their time of recording. Only current z1 and z2 need updating.
+
 	_z2 += z2_correction;
-	// 安全限幅: 防止z2在模型不匹配或噪声下发散
 	_z2 = math::constrain(_z2, -Z2_LIMIT, Z2_LIMIT);
 
-	// 更新角速度估计 z1 (rad/s)
-	// 此时 filter_dt = 8×dt，即当前时刻相对于队列起点的时间偏移
-	_z1 += z1_correction + filter_dt * z2_correction;
+	_z1 += z1_correction;
 
-	// 将校正后的 z1 存入历史队列末尾（最新位置）
-	_his_z1[ESO_ANGULAR_RATE_HIS_LENGTH - 1] = _z1;
+	// Save error sign for adaptive gain tracking
+	_last_err = err;
 
-	// 保存当前误差(减去校正量)，供下一周期计算 z2_err 使用
-	// 减去校正量是因为 z1 已被校正，下次的 _his_z1[0] 也是校正后的值
-	_last_err = err - z1_correction;
-
-
-	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	  模块7: 保存参数并返回
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
-	// 保存时间步长，供后续 updateControlInput()（开环预测）使用
 	_dt = dt;
 
-	// 返回扰动估计值 z2 (rad/s²)
-	// 控制律中通过 getEstimatedAngularAcceleration() 获取 z_inertia + z2
 	return _z2;
 }

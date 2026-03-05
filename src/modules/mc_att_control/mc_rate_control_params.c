@@ -339,7 +339,7 @@ PARAM_DEFINE_INT32(RATE_CTRL_MODE, 0);
  * @decimal 2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ESOR_BETA1, 0.6f);
+PARAM_DEFINE_FLOAT(RATE_ESOR_BETA1, 2.0f);
 
 /**
  * ESO observer gain beta2 for disturbance state (Roll only)
@@ -351,7 +351,7 @@ PARAM_DEFINE_FLOAT(RATE_ESOR_BETA1, 0.6f);
  * @decimal 2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ESOR_BETA2, 7.0f);
+PARAM_DEFINE_FLOAT(RATE_ESOR_BETA2, 20.0f);
 
 /**
  * ESO adaptive coefficient ceta1 for beta1 (Roll only)
@@ -375,7 +375,7 @@ PARAM_DEFINE_FLOAT(RATE_ESOR_CETA1, 0.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ESOR_CETA2, 5000.0f);
+PARAM_DEFINE_FLOAT(RATE_ESOR_CETA2, 500.0f);
 
 /**
  * ESO observer gain beta1 for angular velocity state (Roll only)
@@ -387,7 +387,7 @@ PARAM_DEFINE_FLOAT(RATE_ESOR_CETA2, 5000.0f);
  * @decimal 2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ESOP_BETA1, 0.6f);
+PARAM_DEFINE_FLOAT(RATE_ESOP_BETA1, 2.0f);
 
 /**
  * ESO observer gain beta2 for disturbance state (Roll only)
@@ -399,7 +399,7 @@ PARAM_DEFINE_FLOAT(RATE_ESOP_BETA1, 0.6f);
  * @decimal 2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ESOP_BETA2, 7.0f);
+PARAM_DEFINE_FLOAT(RATE_ESOP_BETA2, 20.0f);
 
 /**
  * ESO adaptive coefficient ceta1 for beta1 (Roll only)
@@ -435,7 +435,7 @@ PARAM_DEFINE_FLOAT(RATE_ESOP_CETA2, 5000.0f);
  * @decimal 2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ESOY_BETA1, 0.6f);
+PARAM_DEFINE_FLOAT(RATE_ESOY_BETA1, 2.0f);
 
 /**
  * ESO observer gain beta2 for disturbance state (Roll only)
@@ -447,7 +447,7 @@ PARAM_DEFINE_FLOAT(RATE_ESOY_BETA1, 0.6f);
  * @decimal 2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ESOY_BETA2, 7.0f);
+PARAM_DEFINE_FLOAT(RATE_ESOY_BETA2, 20.0f);
 
 /**
  * ESO adaptive coefficient ceta1 for beta1 (Roll only)
@@ -484,7 +484,7 @@ PARAM_DEFINE_FLOAT(RATE_ESOY_CETA2, 5000.0f);
  * @unit s
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ACT_T_R, 0.07f);
+PARAM_DEFINE_FLOAT(RATE_ACT_T_R, 0.08f);
 
 /**
  * Roll actuator time constant T
@@ -497,7 +497,7 @@ PARAM_DEFINE_FLOAT(RATE_ACT_T_R, 0.07f);
  * @unit s
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ACT_T_P, 0.07f);
+PARAM_DEFINE_FLOAT(RATE_ACT_T_P, 0.08f);
 
 /**
  * Pitch actuator time constant T
@@ -510,7 +510,7 @@ PARAM_DEFINE_FLOAT(RATE_ACT_T_P, 0.07f);
  * @unit s
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ACT_T_Y, 0.07f);
+PARAM_DEFINE_FLOAT(RATE_ACT_T_Y, 0.08f);
 
 
 /**
@@ -519,13 +519,13 @@ PARAM_DEFINE_FLOAT(RATE_ACT_T_Y, 0.07f);
  * Control gain from input to angular acceleration for Roll axis (ESO only)
  * Typical value: 5.5 for Roll
  *
- * @min 20.0
+ * @min 1.0
  * @max 250.0
  * @decimal 2
  * @unit rad/s^2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ACT_B_R, 120.0f);
+PARAM_DEFINE_FLOAT(RATE_ACT_B_R, 8.0f);
 
 /**
  * Roll actuator control gain b
@@ -533,13 +533,13 @@ PARAM_DEFINE_FLOAT(RATE_ACT_B_R, 120.0f);
  * Control gain from input to angular acceleration for Roll axis (ESO only)
  * Typical value: 5.5 for Roll
  *
- * @min 20.0
+ * @min 1.0
  * @max 250.0
  * @decimal 2
  * @unit rad/s^2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ACT_B_P, 100.0f);
+PARAM_DEFINE_FLOAT(RATE_ACT_B_P, 8.0f);
 
 /**
  * Roll actuator control gain b
@@ -547,13 +547,13 @@ PARAM_DEFINE_FLOAT(RATE_ACT_B_P, 100.0f);
  * Control gain from input to angular acceleration for Roll axis (ESO only)
  * Typical value: 5.5 for Roll
  *
- * @min 20.0
+ * @min 1.0
  * @max 250.0
  * @decimal 2
  * @unit rad/s^2
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_ACT_B_Y, 100.0f);
+PARAM_DEFINE_FLOAT(RATE_ACT_B_Y, 8.0f);
 
 /**
  * TD tracking differentiator parameter P1
@@ -567,7 +567,7 @@ PARAM_DEFINE_FLOAT(RATE_ACT_B_Y, 100.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_TD_P1, 8.0f);
+PARAM_DEFINE_FLOAT(RATE_TD_P1, 3.0f);
 
 /**
  * TD tracking differentiator parameter P2
@@ -580,7 +580,7 @@ PARAM_DEFINE_FLOAT(RATE_TD_P1, 8.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_TD_P2, 12.0f);
+PARAM_DEFINE_FLOAT(RATE_TD_P2, 4.0f);
 
 /**
  * TD tracking differentiator parameter P3
@@ -593,7 +593,7 @@ PARAM_DEFINE_FLOAT(RATE_TD_P2, 12.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_TD_P3, 12.0f);
+PARAM_DEFINE_FLOAT(RATE_TD_P3, 5.0f);
 
 /**
  * Feedback gain P1 for TD feedforward (Roll only)
@@ -605,7 +605,7 @@ PARAM_DEFINE_FLOAT(RATE_TD_P3, 12.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_R_P1, 5.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_R_P1, 3.0f);
 
 /**
  * Feedback gain P1 for TD feedforward (Pitch only)
@@ -617,7 +617,7 @@ PARAM_DEFINE_FLOAT(RATE_FEED_R_P1, 5.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_P_P1, 5.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_P_P1, 3.0f);
 
 /**
  * Feedback gain P1 for TD feedforward (Yaw only)
@@ -629,7 +629,7 @@ PARAM_DEFINE_FLOAT(RATE_FEED_P_P1, 5.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_Y_P1, 5.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_Y_P1, 3.0f);
 
 /**
  * Feedback gain P2 for TD feedforward (Roll only)

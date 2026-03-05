@@ -102,11 +102,13 @@ public:
 	 * @param landed landing flag
 	 * @param td_rate_sp smoothed desired angular velocity from attitude TD [rad/s]
 	 * @param td_rate_accel desired angular acceleration from attitude TD [rad/s²]
+	 * @param timestamp_sample gyro sample timestamp (us) for ESO delay alignment
 	 * @return [-1,1] normalized torque vector to apply to the vehicle
 	 */
 	matrix::Vector3f update(const matrix::Vector3f &rate, const matrix::Vector3f &rate_sp,
 				const matrix::Vector3f &angular_accel, const float dt, const bool landed,
-				const matrix::Vector3f &td_rate_sp, const matrix::Vector3f &td_rate_accel);
+				const matrix::Vector3f &td_rate_sp, const matrix::Vector3f &td_rate_accel,
+				hrt_abstime timestamp_sample = 0);
 
 	/**
 	 * Set the integral term to 0 to prevent windup

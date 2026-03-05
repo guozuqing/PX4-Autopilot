@@ -104,15 +104,16 @@ public:
 	void setTdParameters(float P1, float P2, float P3, float P4) { _attitude_td.setParameters(P1, P2, P3, P4); }
 
 	/**
-	 * Get total desired angular velocity for ESO — body frame
-	 * = W*x2 (trajectory ff) + Kp*quat_error (P correction)
-	 * @return [rad/s] td_rate_sp for ESO (equals rate_setpoint)
+	 * Get desired body angular velocity feedforward from TD
+	 * = α × LPF(W × x2), where x2 = Euler rate from reference-domain TD
+	 * Pure feedforward — does NOT depend on measurement q
+	 * @return [rad/s] td_rate_sp for ESO
 	 */
 	matrix::Vector3f getTdRateSp() const { return _td_rate_sp_body; }
 
 	/**
-	 * Get desired angular acceleration for ESO — body frame
-	 * = W*x3 + Ẇ*x2
+	 * Get desired body angular acceleration feedforward from TD
+	 * = α × LPF(W × x3 + Ẇ × x2), pure reference accel feedforward
 	 * @return [rad/s²] td_rate_accel for ESO
 	 */
 	matrix::Vector3f getTdRateAccel() const { return _td_rate_accel_body; }
@@ -129,13 +130,17 @@ public:
 private:
 	matrix::Vector3f _proportional_gain;
 	matrix::Vector3f _rate_limit;
-	float _yaw_w{0.f}; ///< yaw weight [0,1] to deprioritize caompared to roll and pitch
+	float _yaw_w{0.f}; ///< yaw weight [0,1] to deprioritize compared to roll and pitch
 
 	matrix::Quatf _attitude_setpoint_q; ///< latest known attitude setpoint e.g. from position control
 	float _yawspeed_setpoint{0.f}; ///< latest known yawspeed feed-forward setpoint
 
-	AttitudeTd _attitude_td; ///< 4th-order TD: input=euler_d, x1=smooth angle, x2=euler rate, x3=euler accel
+	AttitudeTd _attitude_td; ///< 4th-order TD: input=euler_d (reference domain), x1=smooth Euler, x2=Euler rate, x3=Euler accel
 
-	matrix::Vector3f _td_rate_sp_body{};    ///< W*x2 + P_correction [rad/s]   — ESO td_rate_sp
-	matrix::Vector3f _td_rate_accel_body{}; ///< W*x3 + Ẇ*x2       [rad/s²] — ESO td_rate_accel
+	matrix::Vector3f _td_rate_sp_body{};    ///< α×LPF(W×x2) body rate feedforward [rad/s]
+	matrix::Vector3f _td_rate_accel_body{}; ///< α×LPF(W×x3+Ẇ×x2) body accel feedforward [rad/s²]
+
+	matrix::Vector3f _rate_ff_filtered{};   ///< LPF state for rate feedforward
+	matrix::Vector3f _accel_ff_filtered{};  ///< LPF state for accel feedforward
+	float _ff_ramp_time{0.0f};              ///< time since takeoff for feedforward ramp [s]
 };

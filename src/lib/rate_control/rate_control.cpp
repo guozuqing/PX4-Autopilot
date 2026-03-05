@@ -38,6 +38,7 @@
 #include "rate_control.hpp"
 #include <px4_platform_common/defines.h>
 #include <px4_platform_common/log.h>
+#include <drivers/drv_hrt.h>
 
 using namespace matrix;
 
@@ -104,7 +105,8 @@ void RateControl::setNegativeSaturationFlag(size_t axis, bool is_saturated)
 //   torque_setpoint — 三轴力矩指令 → 控制分配器 → 电机
 Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, const Vector3f &angular_accel,
 			     const float dt, const bool landed,
-			     const Vector3f &td_rate_sp, const Vector3f &td_rate_accel)
+			     const Vector3f &td_rate_sp, const Vector3f &td_rate_accel,
+			     hrt_abstime timestamp_sample)
 {
 	// ========== 第①步：计算角速度误差（PID路径使用）==========
 	Vector3f rate_error = rate_sp - rate;
@@ -113,31 +115,25 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 	// 用本周期陀螺仪测量值修正上一周期的开环预测
 	// ESO内部流程: 计算观测误差(测量-8步前预测) → 自适应增益 → 校正z1/z2/历史队列
 
-	// Anti-windup: 将控制分配饱和标志传递给ESO
-	// 饱和时ESO冻结β₂自适应放大，防止z2在不可执行状态下继续膨胀
-	acfly_eso_roll.setSaturation(_control_allocator_saturation_positive(0) || _control_allocator_saturation_negative(0));
-	acfly_eso_pitch.setSaturation(_control_allocator_saturation_positive(1) || _control_allocator_saturation_negative(1));
-	acfly_eso_yaw.setSaturation(_control_allocator_saturation_positive(2) || _control_allocator_saturation_negative(2));
+	// Anti-windup: pass directional saturation to ESO (PID-style)
+	// Positive saturation → z2 can only decrease; negative → z2 can only increase
+	acfly_eso_roll.setSaturation(_control_allocator_saturation_positive(0), _control_allocator_saturation_negative(0));
+	acfly_eso_pitch.setSaturation(_control_allocator_saturation_positive(1), _control_allocator_saturation_negative(1));
+	acfly_eso_yaw.setSaturation(_control_allocator_saturation_positive(2), _control_allocator_saturation_negative(2));
 
-	acfly_eso_roll.run(rate(0), dt, landed);   // Roll轴ESO闭环校正
-	acfly_eso_pitch.run(rate(1), dt, landed);  // Pitch轴ESO闭环校正
-	acfly_eso_yaw.run(rate(2), dt, landed);    // Yaw轴ESO闭环校正
+	// ESO closed-loop correction using gyro timestamp_sample for delay alignment
+	acfly_eso_roll.run(rate(0), dt, landed, timestamp_sample);
+	acfly_eso_pitch.run(rate(1), dt, landed, timestamp_sample);
+	acfly_eso_yaw.run(rate(2), dt, landed, timestamp_sample);
 
-	// 获取ESO估计的角速度 z1 (rad/s)，用于控制律中的速度误差计算
+	// 获取ESO估计的角速度 z1 (rad/s)
 	float angular_rate_ESO_roll = acfly_eso_roll.getEstimatedAngularRate();
 	float angular_rate_ESO_pitch = acfly_eso_pitch.getEstimatedAngularRate();
 	float angular_rate_ESO_yaw = acfly_eso_yaw.getEstimatedAngularRate();
 
-	// 获取ESO估计的总角加速度 α = z_inertia + z2 (rad/s²)
-	// 其中 z_inertia 是执行器惯性响应，z2 是外部扰动
-	float angular_acceleration_ESO_roll = acfly_eso_roll.getEstimatedAngularAcceleration();
-	float angular_acceleration_ESO_pitch = acfly_eso_pitch.getEstimatedAngularAcceleration();
-	float angular_acceleration_ESO_yaw = acfly_eso_yaw.getEstimatedAngularAcceleration();
-
-	// 获取执行器惯性响应 z_inertia (rad/s²)，用于力矩输出的扰动补偿
+	// 获取执行器惯性响应 z_inertia (rad/s²)
 	float z_inertia_roll = acfly_eso_roll.getEstimatedMainPower();
 	float z_inertia_pitch = acfly_eso_pitch.getEstimatedMainPower();
-	// Yaw轴启用惯性补偿，与Roll/Pitch统一（修复模型不匹配导致的z2发散）
 	float z_inertia_yaw = acfly_eso_yaw.getEstimatedMainPower();
 
 	Vector3f torque_setpoint{};
@@ -145,6 +141,7 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 	// ========== 第③步：使用外部 TD 输出（来自姿态控制器的 AttitudeTd）==========
 	// td_rate_sp:    姿态 TD 的 x2 — 平滑后的期望角速度 (rad/s)
 	// td_rate_accel: 姿态 TD 的 x3 — 期望角加速度 (rad/s²)
+	// TD现在在参考域: td_x2 = α×LPF(W×euler_rate), 纯前馈(不含测量态q)
 	const Vector3f &td_x2 = td_rate_sp;
 	const Vector3f &td_x3 = td_rate_accel;
 
@@ -169,19 +166,21 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 	// α只被放大(P1+P2)倍，而非旧版的2×P2倍
 
 	// ---- 速度误差 ----
-	// rate_err = 期望角速度(轨迹+P修正) - ESO估计角速度
-	float rate_err_roll  = td_x2(0) + rate_sp(0) - angular_rate_ESO_roll;
-	float rate_err_pitch = td_x2(1) + rate_sp(1) - angular_rate_ESO_pitch;
-	float rate_err_yaw   = td_x2(2) + rate_sp(2) - angular_rate_ESO_yaw;
+	// rate_err = rate_sp - z1 (TD 不进入误差，只做前馈)
+	float rate_err_roll  = rate_sp(0) - angular_rate_ESO_roll;
+	float rate_err_pitch = rate_sp(1) - angular_rate_ESO_pitch;
+	float rate_err_yaw   = rate_sp(2) - angular_rate_ESO_yaw;
 
 	// ---- 加速度误差 ----
-	// accel_err = TD期望角加速度 - ESO估计总角加速度(z_inertia+z2)
-	float accel_err_roll  = td_x3(0) - angular_acceleration_ESO_roll;
-	float accel_err_pitch = td_x3(1) - angular_acceleration_ESO_pitch;
-	float accel_err_yaw   = td_x3(2) - angular_acceleration_ESO_yaw;
+	// accel_err = -z2 (仅扰动, 不含 z_inertia 避免二次补偿)
+	// z_inertia 已在力矩输出公式中直接补偿: torque = (zi + T·Ta1) / b
+	float accel_err_roll  = -acfly_eso_roll.getEstimatedDisturbance();
+	float accel_err_pitch = -acfly_eso_pitch.getEstimatedDisturbance();
+	float accel_err_yaw   = -acfly_eso_yaw.getEstimatedDisturbance();
 
-	// ---- 合成: 标准二阶状态反馈 ----
+	// ---- 经典ADRC控制律 ----
 	// Ta1 = P1×P2 × rate_err + (P1+P2) × accel_err
+	// 特征多项式: (s+P1)(s+P2), 闭环极点 -P1, -P2
 	float Ta1_roll  = _feedback_p1(0) * _feedback_p2(0) * rate_err_roll
 			+ (_feedback_p1(0) + _feedback_p2(0)) * accel_err_roll;
 	float Ta1_pitch = _feedback_p1(1) * _feedback_p2(1) * rate_err_pitch
@@ -206,28 +205,30 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 	if (b_yaw < 0.001f) { b_yaw = 1.0f; }
 
 	// ---- 执行器模型反解：角加速度指令 → 归一化力矩 ----
-	// 飞行中: torque = (z_inertia + T × Ta1) / b
-	//   z_inertia: ESO估计的执行器惯性响应（扰动补偿）
-	//   T × Ta1:   考虑执行器延迟的角加速度指令（执行器反解）
-	//   / b:       增益归一化
-	// 着陆时: 去掉 z_inertia 扰动补偿项，防止地面状态下ESO扰动估计导致振荡
+	// torque = (z_inertia + T × Ta1) / b
+	// z_inertia: 执行器惯性补偿 (扰动前馈)
+	// T × Ta1:  考虑执行器延迟的角加速度指令
 	if (!landed) {
-		// 飞行中: 完整控制律（惯性补偿 + 执行器反解）
-		// 公式: torque = (z_inertia + T × Ta1) / b
-		// z_inertia 项: 补偿执行器当前惯性响应（扰动前馈）
-		// T × Ta1 项:  考虑执行器延迟的角加速度指令（执行器反解）
 		torque_acfly_setpoint(0) = (z_inertia_roll + T_roll * Ta1_roll) / b_roll;
 		torque_acfly_setpoint(1) = (z_inertia_pitch + T_pitch * Ta1_pitch) / b_pitch;
 		torque_acfly_setpoint(2) = (z_inertia_yaw + T_yaw * Ta1_yaw) / b_yaw;
 	} else {
-		// 着陆时: 去掉 z_inertia 扰动补偿项，防止地面状态下ESO扰动估计导致振荡
 		torque_acfly_setpoint(0) = T_roll * Ta1_roll / b_roll;
 		torque_acfly_setpoint(1) = T_pitch * Ta1_pitch / b_pitch;
 		torque_acfly_setpoint(2) = T_yaw * Ta1_yaw / b_yaw;
 	}
 
+	// ---- TD 纯前馈: 叠加在 ADRC 输出之上 ----
+	const float k_ff_rate = 0.15f;
+	const float k_ff_acc  = 0.05f;
+
+	if (!landed) {
+		for (int i = 0; i < 3; i++) {
+			torque_acfly_setpoint(i) += k_ff_rate * td_x2(i) + k_ff_acc * td_x3(i);
+		}
+	}
+
 	// 安全限幅: ESO力矩输出限制在[-1, 1]范围内
-	// 防止z2发散或参数异常导致力矩输出超出控制分配器范围
 	for (int i = 0; i < 3; i++) {
 		torque_acfly_setpoint(i) = math::constrain(torque_acfly_setpoint(i), -1.0f, 1.0f);
 	}
@@ -319,9 +320,15 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 	//   z1 += (z_inertia + z2) × dt            // 角速度开环预测
 	// 下一次 run() 被调用时，ESO会用新的陀螺仪测量值校正这个预测，形成闭环
 	// 注意: 所有模式下都更新ESO（包括纯PID模式），保持ESO状态热备
-	acfly_eso_roll.updateControlInput(torque_setpoint(0));
-	acfly_eso_pitch.updateControlInput(torque_setpoint(1));
-	acfly_eso_yaw.updateControlInput(torque_setpoint(2));
+	// ESO open-loop prediction using ACTUAL applied torque.
+	// When saturated, the actual torque is less than requested.
+	// Compute actual: desired minus unallocated (clamped to [-1,1]).
+	// The saturation flags tell us direction, and the torque is already clamped to [-1,1],
+	// so the torque_setpoint after our clamp IS the actual applied torque.
+	hrt_abstime now_us = hrt_absolute_time();
+	acfly_eso_roll.updateControlInput(torque_setpoint(0), now_us);
+	acfly_eso_pitch.updateControlInput(torque_setpoint(1), now_us);
+	acfly_eso_yaw.updateControlInput(torque_setpoint(2), now_us);
 
 	return torque_setpoint;
 }

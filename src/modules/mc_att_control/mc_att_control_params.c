@@ -157,4 +157,4 @@ PARAM_DEFINE_FLOAT(MC_YAWRATE_MAX, 200.0f);
  * @decimal 2
  * @group Multicopter Position Control
  */
-PARAM_DEFINE_FLOAT(MC_MAN_TILT_TAU, 0.0f);
+PARAM_DEFINE_FLOAT(MC_MAN_TILT_TAU, 0.4f);

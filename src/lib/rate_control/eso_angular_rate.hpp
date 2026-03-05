@@ -57,27 +57,42 @@
 #pragma once
 
 #include <stdint.h>
+#include <drivers/drv_hrt.h>
 
-// 历史缓冲区长度: 8步延迟补偿
-// 陀螺仪到ESO之间约有8个采样周期的滤波延迟
-// ESO用8步前的预测值与当前测量值比较，才能得到准确的观测误差
-static constexpr uint8_t ESO_ANGULAR_RATE_HIS_LENGTH = 8;
+// Timestamp-based ring buffer length for delay compensation.
+// Must be large enough to cover the worst-case gyro filter delay.
+// At 400Hz control rate, 16 slots = 40ms max delay coverage.
+static constexpr uint8_t ESO_HIS_BUF_LEN = 16;
 
 /**
  * @class EsoAngularRate
  *
- * 单轴扩张状态观测器 (每个轴 Roll/Pitch/Yaw 各一个实例)
+ * Single-axis Extended State Observer (one instance per Roll/Pitch/Yaw)
  *
- * 内部状态:
- *   z1         —— 角速度估计 (rad/s)
- *   z2         —— 外部扰动估计 (rad/s²)
- *   z_inertia  —— 执行器惯性响应 (rad/s²)，由一阶惯性模型产生
- *   his_z1[8]  —— z1的8步历史队列，用于延迟补偿
+ * Internal states:
+ *   z1         — angular rate estimate (rad/s)
+ *   z2         — external disturbance estimate (rad/s²)
+ *   z_inertia  — actuator inertia response (rad/s²), from first-order model
  *
- * 观测器模型:
- *   ẑ₁' = z_inertia + z₂           (角速度 = 惯性响应 + 扰动)
- *   z_inertia' = (b×u - z_inertia)/T  (一阶惯性: 力矩→角加速度)
- *   z₂ 由闭环校正驱动              (无模型，纯观测)
+ * Delay compensation:
+ *   Timestamp-indexed ring buffer stores (time_us, z1_prediction) pairs.
+ *   On each run(), the gyro's timestamp_sample is used to look up the
+ *   z1 prediction corresponding to the actual sample time, replacing
+ *   the old fixed 8-step assumption.
+ *
+ * Anti-windup (PID-inspired):
+ *   1. z_inertia model uses ACTUAL applied torque (from control allocator),
+ *      not the desired torque. This prevents model divergence when saturated.
+ *   2. z2 correction is directionally clamped when saturated:
+ *      positive saturation → z2 can only decrease (not grow more positive)
+ *      negative saturation → z2 can only increase (not grow more negative)
+ *      Same logic as PX4 PID's updateIntegral saturation handling.
+ *   3. Adaptive β₂ scaling is frozen during saturation.
+ *
+ * Observer model:
+ *   ẑ₁' = z_inertia + z₂
+ *   z_inertia' = (b×u_actual - z_inertia)/T
+ *   z₂ driven by closed-loop correction
  */
 class EsoAngularRate
 {
@@ -86,160 +101,118 @@ public:
 	~EsoAngularRate() = default;
 
 	/**
-	 * 设置ESO观测器增益参数
-	 * @param beta1  角速度校正增益 (误差→z1校正量的比例系数)
-	 * @param beta2  扰动校正增益 (误差变化量→z2校正量的比例系数)
-	 * @param ceta1  β₁自适应系数 (当前被0.0f禁用，始终不生效)
-	 * @param ceta2  β₂自适应系数 (误差持续时间³→β₂缩放)
+	 * Set ESO observer gain parameters
+	 * @param beta1  angular rate correction gain
+	 * @param beta2  disturbance correction gain
+	 * @param ceta1  β₁ adaptive coefficient (disabled, always 0)
+	 * @param ceta2  β₂ adaptive coefficient
 	 */
 	void setEsoParameters(float beta1, float beta2, float ceta1, float ceta2);
 
 	/**
-	 * 设置执行器惯性模型参数
-	 * @param T  执行器一阶惯性时间常数 (s)，典型值 0.01~0.1
-	 *           描述电机+螺旋桨从力矩指令到实际角加速度的延迟
-	 * @param b  控制增益 (rad/s² / 归一化力矩)
-	 *           将归一化力矩转换为角加速度的比例系数
+	 * Set actuator inertia model parameters
+	 * @param T  first-order time constant (s)
+	 * @param b  control gain (rad/s² per normalized torque)
 	 */
 	void setActParameters(float T, float b);
+
 	/**
-	 * 重置所有状态为零
-	 * 着陆时调用，防止地面状态下扰动估计累积
+	 * Reset all states to zero
 	 */
 	void reset();
 
 	/**
-	 * 开环预测: 用本周期力矩输出预测下一周期状态
-	 * 在控制律计算完成后、下一次 run() 之前调用
-	 * 内部执行:
-	 *   z_inertia += dt/T × (b×u - z_inertia)  // 执行器惯性模型
-	 *   z1 += dt × (z_inertia + z2)             // 角速度开环预测
-	 * @param u  本周期最终力矩输出 (归一化，经过控制分配后)
+	 * Open-loop prediction using ACTUAL applied torque from control allocator.
+	 * Called after control allocation, before next run().
+	 *
+	 * Critical difference from old design: uses u_actual (what the actuators
+	 * really applied) not u_desired (what the controller wanted). When saturated,
+	 * u_actual < u_desired, so the inertia model tracks reality, not fantasy.
+	 *
+	 * Also records (timestamp, z1) into the ring buffer for delay compensation.
+	 *
+	 * @param u_actual  actual applied torque (normalized, post-allocator clipping)
+	 * @param timestamp_us  timestamp of this control cycle (hrt_absolute_time)
 	 */
-	void updateControlInput(float u);
+	void updateControlInput(float u_actual, hrt_abstime timestamp_us);
 
 	/**
-	 * 通知ESO当前轴是否处于控制分配饱和状态
-	 * 饱和时ESO应冻结z2自适应放大，防止内部状态继续漂移
-	 * @param saturated 当前轴是否饱和（正向或负向）
+	 * Set saturation status from control allocator
+	 * @param sat_positive  true if positive torque is saturated
+	 * @param sat_negative  true if negative torque is saturated
 	 */
-	void setSaturation(bool saturated) { _saturated = saturated; }
+	void setSaturation(bool sat_positive, bool sat_negative) {
+		_saturated_positive = sat_positive;
+		_saturated_negative = sat_negative;
+	}
 
 	/**
-	 * 闭环校正: 用陀螺仪测量值修正上一周期的开环预测
-	 * 每个控制周期调用一次 (~250Hz)
-	 * 内部流程:
-	 *   ① 计算观测误差 = 测量值 - 8步前预测值
-	 *   ② 自适应增益调整 (误差持续时间越久→β₂越大)
-	 *   ③ 回溯更新8步历史队列
-	 *   ④ 校正 z1, z2 状态
-	 * @param v       陀螺仪测量角速度 (rad/s)
-	 * @param dt      时间步长 (s)
-	 * @param landed  着陆标志，着陆时重置所有状态
-	 * @return 扰动估计值 z2 (rad/s²)
+	 * Closed-loop correction using gyro measurement.
+	 * Uses timestamp_sample to find the matching z1 prediction in the ring buffer.
+	 *
+	 * @param v                gyro angular rate (rad/s)
+	 * @param dt               time step (s)
+	 * @param landed           landing flag
+	 * @param timestamp_sample gyro sample timestamp (us) for delay alignment
+	 * @return disturbance estimate z2 (rad/s²)
 	 */
-	float run(float v, float dt, bool landed);
+	float run(float v, float dt, bool landed, hrt_abstime timestamp_sample);
 
-	/**
-	 * 获取ESO估计的角速度 z1
-	 * 比陀螺仪原始值多了延迟补偿和滤波
-	 * @return 角速度估计值 (rad/s)
-	 */
 	float getEstimatedAngularRate() const { return _z1; }
-
-	/**
-	 * 获取ESO估计的外部扰动 z2
-	 * 包含风扰、振动、质心偏移等未建模力矩的等效角加速度
-	 * @return 扰动估计值 (rad/s²)
-	 */
 	float getEstimatedDisturbance() const { return _z2; }
-
-	/**
-	 * 获取ESO估计的总角加速度 α = z_inertia + z2
-	 * 控制律中用于加速度误差计算: Tv2 = P2 × (TD.x3 - α)
-	 * @return 总角加速度 (rad/s²) = 执行器惯性响应 + 外部扰动
-	 */
 	float getEstimatedAngularAcceleration() const { return _z_inertia + _z2; }
-
-	/**
-	 * 获取执行器惯性响应 z_inertia
-	 * 由一阶惯性模型产生: z_inertia' = (b×u - z_inertia) / T
-	 * 控制律中用于扰动补偿: torque = (z_inertia + T×Ta1) / b
-	 * @return 执行器惯性响应 (rad/s²)
-	 */
 	float getEstimatedMainPower() const { return _z_inertia; }
-
-	/**
-	 * 获取执行器一阶惯性时间常数 T
-	 * 用于控制律的执行器反解: torque = (z_inertia + T×Ta1) / b
-	 * @return 时间常数 T (s)
-	 */
 	float getT() const { return _T; }
-
-	/**
-	 * 获取控制增益 b
-	 * 用于控制律的执行器反解: torque = (...) / b
-	 * @return 控制增益 b (rad/s² / 归一化力矩)
-	 */
 	float getB() const { return _b; }
 
 private:
-	// ===== 执行器惯性模型参数 =====
-	float _inv_T{0.0f};           ///< 时间常数的倒数 1/T，避免每次除法
-	float _T{0.0f};               ///< 执行器一阶惯性时间常数 (s)
-	                              //   典型值: 0.01~0.1s
-	                              //   越小→执行器响应越快
-	float _b{0.0f};               ///< 控制增益: 归一化力矩 → 角加速度 (rad/s²)
+	/**
+	 * Look up the z1 prediction closest to the given timestamp.
+	 * Returns the newest entry if timestamp is newer than all buffer entries,
+	 * or the oldest if older than all entries.
+	 */
+	float lookupZ1AtTimestamp(hrt_abstime timestamp_us) const;
 
-	// ===== 观测器核心状态 =====
-	float _z_inertia{0.0f};       ///< 执行器惯性响应 (rad/s²)
-	                              //   由一阶惯性模型产生: ż_inertia = (b×u - z_inertia)/T
-	                              //   表示当前力矩指令产生的角加速度（含延迟）
-	float _z1{0.0f};              ///< 角速度估计 (rad/s)
-	                              //   ż1 = z_inertia + z2 (开环预测)
-	                              //   闭环时由观测误差校正
-	float _z2{0.0f};              ///< 外部扰动估计 (rad/s²)
-	                              //   包含风扰/振动/质心偏移等未建模力矩
-	                              //   由误差变化量驱动校正
+	// ===== Actuator model parameters =====
+	float _inv_T{0.0f};
+	float _T{0.0f};
+	float _b{0.0f};
 
-	// ===== 控制输入 =====
-	float _u{0.0f};               ///< 控制输入 (归一化力矩)，由控制律输出
+	// ===== Observer core states =====
+	float _z_inertia{0.0f};       ///< actuator inertia response (rad/s²)
+	float _z1{0.0f};              ///< angular rate estimate (rad/s)
+	float _z2{0.0f};              ///< disturbance estimate (rad/s²)
 
-	// ===== 延迟补偿历史缓冲区 =====
-	//  his_z1[0] = t-8步的z1预测值 ← 与当前陀螺仪测量比较
-	//  his_z1[7] = 当前z1值
-	//  每次闭环校正时回溯更新所有历史值
-	float _his_z1[ESO_ANGULAR_RATE_HIS_LENGTH]{};
+	// ===== Control input =====
+	float _u{0.0f};               ///< last actual applied torque (normalized)
 
-	// ===== 自适应增益跟踪 =====
-	float _last_err{0.0f};        ///< 上周期观测误差，用于计算误差变化量 z2_err
-	bool _err_sign{false};        ///< 误差变化量的符号（检测方向翻转）
-	float _err_continues_time{0.0f}; ///< 误差同方向持续时间 (s)
-	                              //   时间越久 → β₂缩放越大 → 扰动跟踪越快
+	// ===== Timestamp-indexed ring buffer for delay compensation =====
+	struct HistoryEntry {
+		hrt_abstime timestamp_us{0};
+		float z1{0.0f};
+	};
+	HistoryEntry _his_buf[ESO_HIS_BUF_LEN]{};
+	uint8_t _his_head{0};         ///< next write position in ring buffer
 
-	// ===== 时间步长 =====
-	float _dt{0.0f};              ///< 当前时间步长 (s)，run()中保存，updateControlInput()中使用
+	// ===== Adaptive gain tracking =====
+	float _last_err{0.0f};
+	bool _err_sign{false};
+	float _err_continues_time{0.0f};
 
-	// ===== 观测器增益 =====
-	float _beta1{0.0f};           ///< 角速度校正增益 β₁
-	                              //   越大 → z1校正越快，但噪声越大
-	float _beta2{0.0f};           ///< 扰动校正增益 β₂
-	                              //   越大 → z2校正越快，但更容易振荡
+	// ===== Time step =====
+	float _dt{0.0f};
+	float _takeoff_time{0.0f};   ///< time since takeoff [s], z2 frozen when < 1.0
 
-	// ===== 自适应系数 =====
-	float _ceta1{0.0f};           ///< β₁自适应系数 (当前被0.0f禁用)
-	                              //   设计意图: 误差持续时增大β₁
-	                              //   禁用原因: 容易放大噪声
-	float _ceta2{0.0f};           ///< β₂自适应系数 (启用)
-	                              //   公式: β₂_scale = 1 + ζ₂ × t³
-	                              //   t为误差同方向持续时间
+	// ===== Observer gains =====
+	float _beta1{0.0f};
+	float _beta2{0.0f};
+	float _ceta1{0.0f};
+	float _ceta2{0.0f};
 
-	// ===== 饱和感知 =====
-	bool _saturated{false};           ///< 控制分配饱和标志
-	                              //   饱和时冻结z2自适应，防止内部状态漂移
+	// ===== Saturation tracking (PID-style directional) =====
+	bool _saturated_positive{false};  ///< positive torque saturated
+	bool _saturated_negative{false};  ///< negative torque saturated
 
-	// ===== 安全限幅 =====
-	static constexpr float Z2_LIMIT = 50.0f;  ///< z2 扰动估计限幅 (rad/s²)
-	                              //   防止模型不匹配或噪声导致z2发散
-	                              //   50 rad/s² ≈ 2865 deg/s²，对应极端扰动
+	// ===== Safety limits =====
+	static constexpr float Z2_LIMIT = 20.0f;
 };
