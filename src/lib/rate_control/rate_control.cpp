@@ -37,6 +37,7 @@
 
 #include "rate_control.hpp"
 #include <px4_platform_common/defines.h>
+#include <px4_platform_common/log.h>
 
 using namespace matrix;
 
@@ -68,11 +69,6 @@ void RateControl::setActGains(const Vector3f &T, const Vector3f &b)
     acfly_eso_yaw.setActParameters(T(2), b(2));
 }
 
-void RateControl::setTdGains(float P1, float P2, float P3)
-{
-    // Set TD parameters for Roll/Pitch axes
-    rate_td.setTD3Parameters(P1, P2, P3);
-}
 //------------------------------------------------------------------------------------------
 
 void RateControl::setSaturationStatus(const Vector3<bool> &saturation_positive,
@@ -107,7 +103,8 @@ void RateControl::setNegativeSaturationFlag(size_t axis, bool is_saturated)
 // 输出:
 //   torque_setpoint — 三轴力矩指令 → 控制分配器 → 电机
 Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, const Vector3f &angular_accel,
-			     const float dt, const bool landed)
+			     const float dt, const bool landed,
+			     const Vector3f &td_rate_sp, const Vector3f &td_rate_accel)
 {
 	// ========== 第①步：计算角速度误差（PID路径使用）==========
 	Vector3f rate_error = rate_sp - rate;
@@ -115,6 +112,13 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 	// ========== 第②步：ESO 闭环校正 ==========
 	// 用本周期陀螺仪测量值修正上一周期的开环预测
 	// ESO内部流程: 计算观测误差(测量-8步前预测) → 自适应增益 → 校正z1/z2/历史队列
+
+	// Anti-windup: 将控制分配饱和标志传递给ESO
+	// 饱和时ESO冻结β₂自适应放大，防止z2在不可执行状态下继续膨胀
+	acfly_eso_roll.setSaturation(_control_allocator_saturation_positive(0) || _control_allocator_saturation_negative(0));
+	acfly_eso_pitch.setSaturation(_control_allocator_saturation_positive(1) || _control_allocator_saturation_negative(1));
+	acfly_eso_yaw.setSaturation(_control_allocator_saturation_positive(2) || _control_allocator_saturation_negative(2));
+
 	acfly_eso_roll.run(rate(0), dt, landed);   // Roll轴ESO闭环校正
 	acfly_eso_pitch.run(rate(1), dt, landed);  // Pitch轴ESO闭环校正
 	acfly_eso_yaw.run(rate(2), dt, landed);    // Yaw轴ESO闭环校正
@@ -138,46 +142,52 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 
 	Vector3f torque_setpoint{};
 
-	// ========== 第③步：TD 跟踪微分器 — 平滑期望信号 ==========
-	// 将可能含阶跃的 rate_sp 变成平滑轨迹，避免直接跟踪引起振荡
-	// TD内部: 非线性增益 tanh() → 三层状态积分 x1/x2/x3
-	rate_td.track2(rate_sp, dt, landed);
+	// ========== 第③步：使用外部 TD 输出（来自姿态控制器的 AttitudeTd）==========
+	// td_rate_sp:    姿态 TD 的 x2 — 平滑后的期望角速度 (rad/s)
+	// td_rate_accel: 姿态 TD 的 x3 — 期望角加速度 (rad/s²)
+	const Vector3f &td_x2 = td_rate_sp;
+	const Vector3f &td_x3 = td_rate_accel;
 
-	// TD输出:
-	//   x2 — 平滑后的期望角速度 (rad/s)，用于控制律速度层
-	//   x3 — 期望角加速度 (rad/s²)，作为前馈和加速度层误差计算
-	Vector3f td_x2 = rate_td.getX2();  // 平滑期望角速度
-	Vector3f td_x3 = rate_td.getX3();  // 期望角加速度
-	// T4(期望jerk)已被注释，加速度层缺少jerk前馈项
-/* 	Vector3f td_T4 = rate_td.getT4();  // Tracked jerk */
-	// ========== 第④步：单参数控制律 — 计算力矩指令 ==========
+	// Cache for status reporting
+	_td_rate_sp_cached = td_rate_sp;
+	_td_rate_accel_cached = td_rate_accel;
+
+	// ========== 第④步：经典ADRC控制律 — 计算力矩指令 ==========
 	//
-	// 控制律分三层递进：
-	//   Tv1 (速度层)  → Tv2 (加速度层)  → Ta1 (合成) → torque (执行器反解)
+	// 结构: 标准二阶状态反馈 + 单次扰动补偿 (消除旧版α双重放大)
 	//
-	// ---- 第一层：速度误差反馈 + 加速度前馈 ----
-	// Tv1 = P1 × (TD期望角速度 - ESO估计角速度) + TD期望角加速度
-	//       ──────────────────────────────────   ────────────────
-	//       速度误差 × 反馈增益                  加速度前馈
-	// 物理含义: "角速度差这么多，需要这么大的角加速度去追"
-	float Tv1_roll = _feedback_p1(0) * (td_x2(0) - angular_rate_ESO_roll) + td_x3(0);
-	float Tv1_pitch = _feedback_p1(1) * (td_x2(1) - angular_rate_ESO_pitch) + td_x3(1);
-	float Tv1_yaw = _feedback_p1(2) * (td_x2(2) - angular_rate_ESO_yaw) + td_x3(2);
+	// 旧版问题: Ta1 = P2×(Tv1-α) + P2×(td_x3-α)
+	//   → α误差被 2×P2 放大，高增益下极易正反馈振荡
+	//
+	// 新版 (经典ADRC形式):
+	//   rate_err  = (td_x2 + rate_sp) - z1        速度误差
+	//   accel_err = td_x3 - α                     加速度误差 (α=z_inertia+z2)
+	//   Ta1 = P1×P2 × rate_err + (P1+P2) × accel_err
+	//
+	// 特征多项式: s² + (P1+P2)s + P1×P2 = (s+P1)(s+P2)
+	// 闭环极点: -P1, -P2 (独立可调，稳定性有保证)
+	// α只被放大(P1+P2)倍，而非旧版的2×P2倍
 
-	// ---- 第二层：加速度误差反馈 (+ jerk前馈，已注释) ----
-	// Tv2 = P2 × (TD期望角加速度 - ESO估计角加速度) [+ TD.T4]
-	// 物理含义: "角加速度差这么多，需要这么大的jerk去追"
-	// 注: T4(jerk前馈)被注释掉，可能为降低噪声敏感度
-	float Tv2_roll = _feedback_p2(0) * (td_x3(0) - angular_acceleration_ESO_roll)/*  + td_T4(0) */;
-	float Tv2_pitch = _feedback_p2(1) * (td_x3(1) - angular_acceleration_ESO_pitch)/*  + td_T4(1) */;
-	float Tv2_yaw = _feedback_p2(2) * (td_x3(2) - angular_acceleration_ESO_yaw)/*  + td_T4(2) */;
+	// ---- 速度误差 ----
+	// rate_err = 期望角速度(轨迹+P修正) - ESO估计角速度
+	float rate_err_roll  = td_x2(0) + rate_sp(0) - angular_rate_ESO_roll;
+	float rate_err_pitch = td_x2(1) + rate_sp(1) - angular_rate_ESO_pitch;
+	float rate_err_yaw   = td_x2(2) + rate_sp(2) - angular_rate_ESO_yaw;
 
-	// ---- 合成：总角加速度指令 ----
-	// Ta1 = P2 × (Tv1 - ESO估计角加速度) + Tv2
-	// 将速度层和加速度层的控制量叠加，得到最终需要的角加速度
-	float Ta1_roll = _feedback_p2(0) * (Tv1_roll - angular_acceleration_ESO_roll) + Tv2_roll;
-	float Ta1_pitch = _feedback_p2(1) * (Tv1_pitch - angular_acceleration_ESO_pitch) + Tv2_pitch;
-	float Ta1_yaw = _feedback_p2(2) * (Tv1_yaw - angular_acceleration_ESO_yaw) + Tv2_yaw;
+	// ---- 加速度误差 ----
+	// accel_err = TD期望角加速度 - ESO估计总角加速度(z_inertia+z2)
+	float accel_err_roll  = td_x3(0) - angular_acceleration_ESO_roll;
+	float accel_err_pitch = td_x3(1) - angular_acceleration_ESO_pitch;
+	float accel_err_yaw   = td_x3(2) - angular_acceleration_ESO_yaw;
+
+	// ---- 合成: 标准二阶状态反馈 ----
+	// Ta1 = P1×P2 × rate_err + (P1+P2) × accel_err
+	float Ta1_roll  = _feedback_p1(0) * _feedback_p2(0) * rate_err_roll
+			+ (_feedback_p1(0) + _feedback_p2(0)) * accel_err_roll;
+	float Ta1_pitch = _feedback_p1(1) * _feedback_p2(1) * rate_err_pitch
+			+ (_feedback_p1(1) + _feedback_p2(1)) * accel_err_pitch;
+	float Ta1_yaw   = _feedback_p1(2) * _feedback_p2(2) * rate_err_yaw
+			+ (_feedback_p1(2) + _feedback_p2(2)) * accel_err_yaw;
 
 	// ---- 获取执行器模型参数 ----
 	// T: 执行器一阶惯性时间常数 (s)，描述电机+螺旋桨的响应延迟
@@ -220,6 +230,17 @@ Vector3f RateControl::update(const Vector3f &rate, const Vector3f &rate_sp, cons
 	// 防止z2发散或参数异常导致力矩输出超出控制分配器范围
 	for (int i = 0; i < 3; i++) {
 		torque_acfly_setpoint(i) = math::constrain(torque_acfly_setpoint(i), -1.0f, 1.0f);
+	}
+
+	// DEBUG: print ESO key signals every ~1s (250 cycles)
+	if (++_debug_counter >= 250) {
+		_debug_counter = 0;
+		PX4_INFO("ESO R: rerr=%.4f aerr=%.4f Ta1=%.1f torq=%.4f z1=%.4f z2=%.2f zi=%.2f",
+			 (double)rate_err_roll, (double)accel_err_roll,
+			 (double)Ta1_roll, (double)torque_acfly_setpoint(0),
+			 (double)angular_rate_ESO_roll,
+			 (double)acfly_eso_roll.getEstimatedDisturbance(),
+			 (double)z_inertia_roll);
 	}
 
 	// ========== 第⑤步：传统 PID 并行计算 ==========
@@ -345,12 +366,12 @@ void RateControl::getRateControlStatus(rate_ctrl_status_s &rate_ctrl_status)
 
 	//------------------------------------------------------------------------------------------
 	// Report detailed ESO and TD states (Roll axis only)
-	rate_ctrl_status.td_trate_roll = rate_td.getX2()(0);
-	rate_ctrl_status.td_trate_pitch = rate_td.getX2()(1);
-	rate_ctrl_status.td_trate_yaw = rate_td.getX2()(2);
-	rate_ctrl_status.td_tdrate_roll = rate_td.getX3()(0);
-	rate_ctrl_status.td_tdrate_pitch = rate_td.getX3()(1);
-	rate_ctrl_status.td_tdrate_yaw = rate_td.getX3()(2);
+	rate_ctrl_status.td_trate_roll = _td_rate_sp_cached(0);
+	rate_ctrl_status.td_trate_pitch = _td_rate_sp_cached(1);
+	rate_ctrl_status.td_trate_yaw = _td_rate_sp_cached(2);
+	rate_ctrl_status.td_tdrate_roll = _td_rate_accel_cached(0);
+	rate_ctrl_status.td_tdrate_pitch = _td_rate_accel_cached(1);
+	rate_ctrl_status.td_tdrate_yaw = _td_rate_accel_cached(2);
 
 	rate_ctrl_status.eso_rate_roll = acfly_eso_roll.getEstimatedAngularRate();
 	rate_ctrl_status.eso_rate_pitch = acfly_eso_pitch.getEstimatedAngularRate();

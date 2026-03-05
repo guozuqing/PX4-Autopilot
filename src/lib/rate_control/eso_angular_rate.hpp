@@ -119,6 +119,13 @@ public:
 	void updateControlInput(float u);
 
 	/**
+	 * 通知ESO当前轴是否处于控制分配饱和状态
+	 * 饱和时ESO应冻结z2自适应放大，防止内部状态继续漂移
+	 * @param saturated 当前轴是否饱和（正向或负向）
+	 */
+	void setSaturation(bool saturated) { _saturated = saturated; }
+
+	/**
 	 * 闭环校正: 用陀螺仪测量值修正上一周期的开环预测
 	 * 每个控制周期调用一次 (~250Hz)
 	 * 内部流程:
@@ -226,6 +233,10 @@ private:
 	float _ceta2{0.0f};           ///< β₂自适应系数 (启用)
 	                              //   公式: β₂_scale = 1 + ζ₂ × t³
 	                              //   t为误差同方向持续时间
+
+	// ===== 饱和感知 =====
+	bool _saturated{false};           ///< 控制分配饱和标志
+	                              //   饱和时冻结z2自适应，防止内部状态漂移
 
 	// ===== 安全限幅 =====
 	static constexpr float Z2_LIMIT = 50.0f;  ///< z2 扰动估计限幅 (rad/s²)

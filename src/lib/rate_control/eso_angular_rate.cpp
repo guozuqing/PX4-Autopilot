@@ -101,10 +101,22 @@ void EsoAngularRate::updateControlInput(float u)
 //   自适应增益应对突变扰动
 float EsoAngularRate::run(float v, float dt, bool landed)
 {
-	// 着陆时清零所有ESO状态，防止地面状态下扰动估计累积
+	// 着陆时: 保持z1跟踪陀螺仪测量值，清零其他状态
+	// 不能用reset()全部清零，否则起飞瞬间z1=0 vs 实际角速度≠0 → 巨大观测误差 → 发散
 	if (landed)
 	{
-	    reset();
+	    _z1 = v;  // z1跟踪测量值，起飞时无跳变
+	    _z2 = 0.0f;
+	    _z_inertia = 0.0f;
+	    _u = 0.0f;
+	    _last_err = 0.0f;
+	    _err_sign = false;
+	    _err_continues_time = 0.0f;
+	    _dt = dt;
+	    for (uint8_t i = 0; i < ESO_ANGULAR_RATE_HIS_LENGTH; ++i) {
+		    _his_z1[i] = v;  // 历史队列也初始化为测量值
+	    }
+	    return _z2;
 	}
 	/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	  模块1: 计算观测误差
@@ -129,6 +141,11 @@ float EsoAngularRate::run(float v, float dt, bool landed)
 	if ((z2_err > 0.0f) != _err_sign) {
 		_err_continues_time = 0.0f;      // 方向翻转 → 重置持续时间计数
 		_err_sign = (z2_err > 0.0f);     // 更新当前符号
+	} else if (_saturated) {
+		// Anti-windup: 控制分配饱和时冻结自适应累积时间
+		// 饱和意味着实际执行力矩 < 指令力矩，继续放大β₂只会加剧内部状态漂移
+		// 类似PID的anti-windup: 饱和时停止积分
+		_err_continues_time = 0.0f;
 	} else {
 		_err_continues_time += dt;       // 同方向持续 → 累加时间
 		// 安全限幅: 持续时间上限2秒，防止t³项在长时间同向误差下增长过快

@@ -133,8 +133,8 @@ MulticopterAttitudeControl::parameters_updated()
 		Vector3f(_param_rate_act_T_r.get(), _param_rate_act_T_p.get(), _param_rate_act_T_y.get()),
 		Vector3f(_param_rate_act_b_r.get(), _param_rate_act_b_p.get(), _param_rate_act_b_y.get()));
 
-	_rate_control.setTdGains(
-		_param_rate_td_p1.get(), _param_rate_td_p2.get(), _param_rate_td_p3.get());
+	_attitude_control.setTdParameters(
+		_param_rate_td_p1.get(), _param_rate_td_p2.get(), _param_rate_td_p3.get(), _param_rate_td_p3.get());
 
 	const int new_mode = _param_rate_eso_ctrl_mode.get();
 	_rate_control.setRateCtrlMode(new_mode);
@@ -410,7 +410,7 @@ MulticopterAttitudeControl::Run()
 					_quat_reset_counter = v_att.quat_reset_counter;
 				}
 
-				Vector3f rates_sp = _attitude_control.update(q);
+				Vector3f rates_sp = _attitude_control.update(q, dt, _maybe_landed || _landed);
 
 				const hrt_abstime now_att = hrt_absolute_time();
 				autotune_attitude_control_status_s pid_autotune;
@@ -499,9 +499,14 @@ MulticopterAttitudeControl::Run()
 				_rate_control.setSaturationStatus(saturation_positive, saturation_negative);
 			}
 
+			// Get TD outputs from attitude controller for rate controller
+			const Vector3f td_rate_sp = _attitude_control.getTdRateSp();
+			const Vector3f td_rate_accel = _attitude_control.getTdRateAccel();
+
 			// Run rate controller
 			Vector3f torque_setpoint =
-				_rate_control.update(rates, _rates_setpoint, angular_accel, dt, _maybe_landed || _landed);
+				_rate_control.update(rates, _rates_setpoint, angular_accel, dt, _maybe_landed || _landed,
+						     td_rate_sp, td_rate_accel);
 
 			// Yaw torque low-pass filter
 			torque_setpoint(2) = _output_lpf_yaw.update(torque_setpoint(2), dt);

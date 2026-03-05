@@ -50,6 +50,7 @@
 
 #include <matrix/matrix/math.hpp>
 #include <mathlib/math/Limits.hpp>
+#include "AttitudeTd.hpp"
 
 class AttitudeControl
 {
@@ -94,11 +95,36 @@ public:
 	}
 
 	/**
+	 * Set tracking differentiator parameters
+	 * @param P1 Angle tracking gain
+	 * @param P2 Velocity tracking gain
+	 * @param P3 Acceleration tracking gain
+	 * @param P4 Jerk tracking gain
+	 */
+	void setTdParameters(float P1, float P2, float P3, float P4) { _attitude_td.setParameters(P1, P2, P3, P4); }
+
+	/**
+	 * Get total desired angular velocity for ESO — body frame
+	 * = W*x2 (trajectory ff) + Kp*quat_error (P correction)
+	 * @return [rad/s] td_rate_sp for ESO (equals rate_setpoint)
+	 */
+	matrix::Vector3f getTdRateSp() const { return _td_rate_sp_body; }
+
+	/**
+	 * Get desired angular acceleration for ESO — body frame
+	 * = W*x3 + Ẇ*x2
+	 * @return [rad/s²] td_rate_accel for ESO
+	 */
+	matrix::Vector3f getTdRateAccel() const { return _td_rate_accel_body; }
+
+	/**
 	 * Run one control loop cycle calculation
 	 * @param q estimation of the current vehicle attitude unit quaternion
+	 * @param dt time step [s]
+	 * @param landed landing flag (resets TD when true)
 	 * @return [rad/s] body frame 3D angular rate setpoint vector to be executed by the rate controller
 	 */
-	matrix::Vector3f update(const matrix::Quatf &q) const;
+	matrix::Vector3f update(const matrix::Quatf &q, float dt, bool landed);
 
 private:
 	matrix::Vector3f _proportional_gain;
@@ -107,4 +133,9 @@ private:
 
 	matrix::Quatf _attitude_setpoint_q; ///< latest known attitude setpoint e.g. from position control
 	float _yawspeed_setpoint{0.f}; ///< latest known yawspeed feed-forward setpoint
+
+	AttitudeTd _attitude_td; ///< 4th-order TD: input=euler_d, x1=smooth angle, x2=euler rate, x3=euler accel
+
+	matrix::Vector3f _td_rate_sp_body{};    ///< W*x2 + P_correction [rad/s]   — ESO td_rate_sp
+	matrix::Vector3f _td_rate_accel_body{}; ///< W*x3 + Ẇ*x2       [rad/s²] — ESO td_rate_accel
 };

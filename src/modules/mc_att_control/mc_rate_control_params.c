@@ -567,35 +567,33 @@ PARAM_DEFINE_FLOAT(RATE_ACT_B_Y, 100.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_TD_P1, 50.0f);
+PARAM_DEFINE_FLOAT(RATE_TD_P1, 8.0f);
 
 /**
  * TD tracking differentiator parameter P2
  *
  * Second parameter for TD tracking differentiator (Roll/Pitch)
  * Controls acceleration tracking gain
- * Typical value: 15 for Roll/Pitch
  *
  * @min 1.0
  * @max 50.0
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_TD_P2, 50.0f);
+PARAM_DEFINE_FLOAT(RATE_TD_P2, 12.0f);
 
 /**
  * TD tracking differentiator parameter P3
  *
  * Third parameter for TD tracking differentiator (Roll/Pitch)
  * Controls jerk tracking gain
- * Typical value: 15 for Roll/Pitch
  *
  * @min 1.0
  * @max 50.0
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_TD_P3, 50.0f);
+PARAM_DEFINE_FLOAT(RATE_TD_P3, 12.0f);
 
 /**
  * Feedback gain P1 for TD feedforward (Roll only)
@@ -607,7 +605,7 @@ PARAM_DEFINE_FLOAT(RATE_TD_P3, 50.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_R_P1, 15.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_R_P1, 5.0f);
 
 /**
  * Feedback gain P1 for TD feedforward (Pitch only)
@@ -619,7 +617,7 @@ PARAM_DEFINE_FLOAT(RATE_FEED_R_P1, 15.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_P_P1, 15.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_P_P1, 5.0f);
 
 /**
  * Feedback gain P1 for TD feedforward (Yaw only)
@@ -631,7 +629,7 @@ PARAM_DEFINE_FLOAT(RATE_FEED_P_P1, 15.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_Y_P1, 15.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_Y_P1, 5.0f);
 
 /**
  * Feedback gain P2 for TD feedforward (Roll only)
@@ -643,7 +641,7 @@ PARAM_DEFINE_FLOAT(RATE_FEED_Y_P1, 15.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_R_P2, 15.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_R_P2, 3.0f);
 
 /**
  * Feedback gain P2 for TD feedforward (Pitch only)
@@ -655,7 +653,7 @@ PARAM_DEFINE_FLOAT(RATE_FEED_R_P2, 15.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_P_P2, 15.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_P_P2, 3.0f);
 
 /**
  * Feedback gain P2 for TD feedforward (Yaw only)
@@ -667,4 +665,4 @@ PARAM_DEFINE_FLOAT(RATE_FEED_P_P2, 15.0f);
  * @decimal 1
  * @group Multicopter Rate Control
  */
-PARAM_DEFINE_FLOAT(RATE_FEED_Y_P2, 15.0f);
+PARAM_DEFINE_FLOAT(RATE_FEED_Y_P2, 3.0f);

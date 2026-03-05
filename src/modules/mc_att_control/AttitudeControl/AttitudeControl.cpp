@@ -52,63 +52,93 @@ void AttitudeControl::setProportionalGain(const matrix::Vector3f &proportional_g
 	}
 }
 
-matrix::Vector3f AttitudeControl::update(const Quatf &q) const
+matrix::Vector3f AttitudeControl::update(const Quatf &q, const float dt, const bool landed)
 {
-	Quatf qd = _attitude_setpoint_q;
+	// ========== 4th-order TD: smooth desired Euler angles ==========
+	const Eulerf euler_d_angles(_attitude_setpoint_q);
+	const Vector3f euler_d_vec(euler_d_angles.phi(), euler_d_angles.theta(), euler_d_angles.psi());
+	_attitude_td.track(euler_d_vec, dt, landed);
 
-	// calculate reduced desired attitude neglecting vehicle's yaw to prioritize roll and pitch
+	const Vector3f x1 = _attitude_td.getX1(); // smoothed desired angle  [rad]
+	const Vector3f x2 = _attitude_td.getX2(); // desired euler rate      [rad/s]
+	const Vector3f x3 = _attitude_td.getX3(); // desired euler accel     [rad/s²]
+
+	// ========== W matrix: euler → body frame ==========
+	// W = [ 1,      0,          -sinθ       ]
+	//     [ 0,    cosφ,    sinφ·cosθ      ]
+	//     [ 0,   -sinφ,    cosφ·cosθ      ]
+	const float phi   = x1(0);
+	const float theta = x1(1);
+	const float sp = sinf(phi),   cp = cosf(phi);
+	const float st = sinf(theta), ct = cosf(theta);
+	const float ct_s = fabsf(ct) < 1e-6f ? copysignf(1e-6f, ct) : ct;
+
+	// trajectory feedforward body rate:  ω_ff = W × x2
+	const float pd = x2(0), qd_e = x2(1), rd = x2(2);
+	Vector3f body_rate_ff;
+	body_rate_ff(0) = pd                    - st    * rd;
+	body_rate_ff(1) =       cp * qd_e       + sp * ct_s * rd;
+	body_rate_ff(2) =     - sp * qd_e       + cp * ct_s * rd;
+
+	// trajectory acceleration:  α_d = W × x3 + Ẇ × x2
+	const float pd3 = x3(0), qd3 = x3(1), rd3 = x3(2);
+	_td_rate_accel_body(0) = pd3                    - st    * rd3
+				 + (       -ct_s * rd) * qd_e;
+	_td_rate_accel_body(1) =       cp * qd3         + sp * ct_s * rd3
+				 + pd * (-sp * qd_e + cp * ct_s * rd)
+				 + qd_e * (-sp * st * rd);
+	_td_rate_accel_body(2) =     - sp * qd3         + cp * ct_s * rd3
+				 + pd * (-cp * qd_e - sp * ct_s * rd)
+				 + qd_e * (-cp * st * rd);
+
+	// ========== Attitude P control: use TD x1 (smoothed desired angle) ==========
+	// x1 is the smoothed euler_d from the 4th-order TD, ensuring P control output
+	// is consistent with x2/x3 fed to ESO (all from same trajectory).
+	// Requires TD P1>0 (currently 8.0) for x1 to track euler_d.
+	Quatf qd = Quatf(Eulerf(x1(0), x1(1), x1(2)));
+
 	const Vector3f e_z = q.dcm_z();
 	const Vector3f e_z_d = qd.dcm_z();
 	Quatf qd_red(e_z, e_z_d);
 
 	if (fabsf(qd_red(1)) > (1.f - 1e-5f) || fabsf(qd_red(2)) > (1.f - 1e-5f)) {
-		// In the infinitesimal corner case where the vehicle and thrust have the completely opposite direction,
-		// full attitude control anyways generates no yaw input and directly takes the combination of
-		// roll and pitch leading to the correct desired yaw. Ignoring this case would still be totally safe and stable.
 		qd_red = qd;
 
 	} else {
-		// Transform rotation from current to desired thrust vector into a world frame reduced desired attitude.
-		// This is a right multiplication as the tilt error quaternion is obtained from two Z vectors expressed in the world frame.
 		qd_red *= q;
 	}
 
-	// With a full desired attitude given by: qd = qd_red * qd_dyaw, extract the delta yaw component.
-	// By definition, the delta yaw quaternion has the form (cos(angle/2), 0, 0, sin(angle/2))
 	Quatf qd_dyaw = qd_red.inversed() * qd;
 	qd_dyaw.canonicalize();
-	// catch numerical problems with the domain of acosf and asinf
 	qd_dyaw(0) = math::constrain(qd_dyaw(0), -1.f, 1.f);
 	qd_dyaw(3) = math::constrain(qd_dyaw(3), -1.f, 1.f);
 
-	// scale the delta yaw angle and re-combine the desired attitude
 	qd = qd_red * Quatf(cosf(_yaw_w * acosf(qd_dyaw(0))), 0.f, 0.f, sinf(_yaw_w * asinf(qd_dyaw(3))));
 
-	// quaternion attitude control law, qe is rotation from q to qd
 	const Quatf qe = q.inversed() * qd;
-
-	// using sin(alpha/2) scaled rotation axis as attitude error (see quaternion definition by axis angle)
-	// also taking care of the antipodal unit quaternion ambiguity
 	const Vector3f eq = 2.f * qe.canonical().imag();
 
-	// calculate angular rates setpoint
-	Vector3f rate_setpoint = eq.emult(_proportional_gain);
+	// P correction rate (attitude error → body rate)
+	Vector3f rate_p = eq.emult(_proportional_gain);
 
-	// Feed forward the yaw setpoint rate.
-	// yawspeed_setpoint is the feed forward commanded rotation around the world z-axis,
-	// but we need to apply it in the body frame (because _rates_sp is expressed in the body frame).
-	// Therefore we infer the world z-axis (expressed in the body frame) by taking the last column of R.transposed (== q.inversed)
-	// and multiply it by the yaw setpoint rate (yawspeed_setpoint).
-	// This yields a vector representing the commanded rotatation around the world z-axis expressed in the body frame
-	// such that it can be added to the rates setpoint.
 	if (std::isfinite(_yawspeed_setpoint)) {
-		rate_setpoint += q.inversed().dcm_z() * _yawspeed_setpoint;
+		rate_p += q.inversed().dcm_z() * _yawspeed_setpoint;
 	}
 
-	// limit rates
+	// ========== rate_setpoint: P correction only (for PID path) ==========
+	// PID uses _rates_setpoint = P correction, same as original PX4 — loop dynamics unchanged
+	Vector3f rate_setpoint = rate_p;
+
 	for (int i = 0; i < 3; i++) {
 		rate_setpoint(i) = math::constrain(rate_setpoint(i), -_rate_limit(i), _rate_limit(i));
 	}
+
+	// ========== ESO path ==========
+	// td_rate_sp = W×x2 (pure trajectory body rate from 4th-order TD)
+	// td_rate_accel = W×x3 + Ẇ×x2 (trajectory body accel)
+	// These two are physically consistent: td_rate_accel = d(td_rate_sp)/dt
+	// P correction (rate_setpoint) is injected separately in ESO Tv1 via rate_sp param
+	_td_rate_sp_body = body_rate_ff;
 
 	return rate_setpoint;
 }

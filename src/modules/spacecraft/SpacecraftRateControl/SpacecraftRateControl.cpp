@@ -187,7 +187,7 @@ void SpacecraftRateControl::updateRateControl()
 				}
 			}
 
-			const Vector3f torque_sp = _rate_control.update(rates, _rates_setpoint, angular_accel, dt, false);
+			const Vector3f torque_sp = _rate_control.update(rates, _rates_setpoint, angular_accel, dt, false, Vector3f(), Vector3f());
 
 			// publish rate controller status
 			rate_ctrl_status_s rate_ctrl_status{};

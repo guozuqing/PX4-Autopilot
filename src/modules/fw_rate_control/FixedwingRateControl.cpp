@@ -364,7 +364,7 @@ void FixedwingRateControl::Run()
 
 				// Run attitude RATE controllers which need the desired attitudes from above, add trim.
 				const Vector3f angular_acceleration_setpoint = _rate_control.update(rates, body_rates_setpoint, angular_accel, dt,
-						_landed);
+						_landed, Vector3f(), Vector3f());
 
 				Vector3f control_u = angular_acceleration_setpoint * _airspeed_scaling * _airspeed_scaling;
 

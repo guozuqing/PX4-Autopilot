@@ -44,7 +44,6 @@
 #include <mathlib/mathlib.h>
 #include <uORB/topics/rate_ctrl_status.h>
 #include "eso_angular_rate.hpp"
-#include "rate_td.hpp"
 
 class RateControl
 {
@@ -63,7 +62,7 @@ public:
     void setFeedbackGains(const matrix::Vector3f &FP1, const matrix::Vector3f &FP2);
 	void setActGains(const matrix::Vector3f &T, const matrix::Vector3f &b);
 	void setEsoGains(const matrix::Vector3f &beta1, const matrix::Vector3f &beta2, const matrix::Vector3f &ceta1, const matrix::Vector3f &ceta2);
-	void setTdGains(float P1, float P2, float P3);
+	// TD gains removed — TD is now in AttitudeControl
 	void setRateCtrlMode(int eso_mode) { _rate_ctrl_mode = eso_mode; };
 	//------------------------------------------------------------------------------------------
 	/**
@@ -98,11 +97,16 @@ public:
 	 * Run one control loop cycle calculation
 	 * @param rate estimation of the current vehicle angular rate
 	 * @param rate_sp desired vehicle angular rate setpoint
-	 * @param dt desired vehicle angular rate setpoint
+	 * @param angular_accel angular acceleration estimate
+	 * @param dt time step [s]
+	 * @param landed landing flag
+	 * @param td_rate_sp smoothed desired angular velocity from attitude TD [rad/s]
+	 * @param td_rate_accel desired angular acceleration from attitude TD [rad/s²]
 	 * @return [-1,1] normalized torque vector to apply to the vehicle
 	 */
 	matrix::Vector3f update(const matrix::Vector3f &rate, const matrix::Vector3f &rate_sp,
-				const matrix::Vector3f &angular_accel, const float dt, const bool landed);
+				const matrix::Vector3f &angular_accel, const float dt, const bool landed,
+				const matrix::Vector3f &td_rate_sp, const matrix::Vector3f &td_rate_accel);
 
 	/**
 	 * Set the integral term to 0 to prevent windup
@@ -157,10 +161,13 @@ private:
 	EsoAngularRate acfly_eso_pitch;
 	EsoAngularRate acfly_eso_yaw;
 
-	// TD tracker for Roll/Pitch rate setpoint tracking
-	RateTd rate_td;
+	// Cached external TD outputs for status reporting
+	matrix::Vector3f _td_rate_sp_cached{};
+	matrix::Vector3f _td_rate_accel_cached{};
 
 	/* controller mode: 0 = PID, 1 = PD+ESO */
 	int _rate_ctrl_mode{0};
+
+	int _debug_counter{0}; // ESO diagnostic print counter
 	//------------------------------------------------------------------------------------------
 };

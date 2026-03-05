@@ -40,7 +40,7 @@ using namespace matrix;
 TEST(AttitudeControlTest, AllZeroCase)
 {
 	AttitudeControl attitude_control;
-	Vector3f rate_setpoint = attitude_control.update(Quatf());
+	Vector3f rate_setpoint = attitude_control.update(Quatf(), 0.004f, false);
 	EXPECT_EQ(rate_setpoint, Vector3f());
 }
 
@@ -62,7 +62,7 @@ public:
 
 		for (i = 100; i > 0; i--) {
 			// run attitude control to get rate setpoints
-			const Vector3f rate_setpoint_new = _attitude_control.update(_quat_state);
+			const Vector3f rate_setpoint_new = _attitude_control.update(_quat_state, 0.004f, false);
 			// rotate the simulated state quaternion according to the rate setpoint
 			_quat_state = _quat_state * Quatf(AxisAnglef(rate_setpoint_new));
 			_quat_state = -_quat_state; // produce intermittent antipodal quaternion states to test against unwinding problem
@@ -124,7 +124,7 @@ TEST(AttitudeControlTest, YawWeightScaling)
 	attitude_control.setAttitudeSetpoint(pure_yaw_attitude, 0.f);
 
 	// WHEN: we run one iteration of the controller
-	Vector3f rate_setpoint = attitude_control.update(Quatf());
+	Vector3f rate_setpoint = attitude_control.update(Quatf(), 0.004f, false);
 
 	// THEN: no actuation in roll, pitch
 	EXPECT_EQ(Vector2f(rate_setpoint), Vector2f());
@@ -134,7 +134,7 @@ TEST(AttitudeControlTest, YawWeightScaling)
 	// GIVEN: additional corner case of zero yaw weight
 	attitude_control.setProportionalGain(Vector3f(6.5f, 6.5f, yaw_gain), 0.f);
 	// WHEN: we run one iteration of the controller
-	rate_setpoint = attitude_control.update(Quatf());
+	rate_setpoint = attitude_control.update(Quatf(), 0.004f, false);
 	// THEN: no actuation (also no NAN)
 	EXPECT_EQ(rate_setpoint, Vector3f());
 }
