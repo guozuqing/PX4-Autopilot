@@ -1,0 +1,65 @@
+From: PX4 Autopilot <dev@px4.io>
+Date: Wed, 4 Dec 2024 12:22:00 +0800
+Subject: [PATCH] Fix LPSPI DMA buffer overrun and iteration count bugs
+
+Fix two critical bugs in iMXRT LPSPI DMA driver that caused:
+1. Buffer overrun and system crashes with 16-bit SPI transfers
+2. Incorrect DMA transfer size leading to data corruption
+
+Bug 1: Byte calculation error at line 1578
+- Changed from: nwords << 2 (multiply by 4 - WRONG)
+- Changed to:   nwords << 1 (multiply by 2 - CORRECT)
+- For 16-bit transfers: bytes = words × 2
+
+Bug 2: DMA iteration count error at lines 1629, 1643
+- Changed from: config.iter = nbytes (total bytes - WRONG)
+- Changed to:   config.iter = nwords (word count - CORRECT)
+- eDMA formula: total_transfer = iter × nbytes
+- For 16-bit: iter=words, nbytes=2, total=words×2 bytes
+
+These bugs caused DMA to transfer 2x the required data, leading to:
+- Stack corruption and hard faults
+- Invalid data reads (0xFFFF)
+- System crashes and continuous reboots
+
+Affected: All iMXRT boards using LPSPI with DMA and 16-bit transfers
+Boards: FMU-v6XRT, Sky v6x-rt, and similar iMXRT-based flight controllers
+
+Signed-off-by: PX4 Autopilot <dev@px4.io>
+---
+ arch/arm/src/imxrt/imxrt_lpspi.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/src/imxrt/imxrt_lpspi.c b/arch/arm/src/imxrt/imxrt_lpspi.c
+index 1234567..abcdefg 100644
+--- a/arch/arm/src/imxrt/imxrt_lpspi.c
++++ b/arch/arm/src/imxrt/imxrt_lpspi.c
+@@ -1575,7 +1575,7 @@ static void imxrt_lpspi_exchange(FAR struct spi_dev_s * dev,
+
+   /* Convert the number of word to a number of bytes */
+
+-  nbytes = (priv->nbits > 8) ? nwords << 2 : nwords;
++  nbytes = (priv->nbits > 8) ? nwords << 1 : nwords;
+
+   /* Invalid DMA channels fall back to non-DMA method. */
+
+@@ -1626,7 +1626,7 @@ static void imxrt_lpspi_exchange(FAR struct spi_dev_s * dev,
+   config.daddr  = (uint32_t) (rxbuffer ? rxbuffer : rxdummy);
+   config.soff   = 0;
+   config.doff   = rxbuffer ? adjust : 0;
+-  config.iter   = nbytes;
++  config.iter   = nwords;
+   config.flags  = EDMA_CONFIG_LINKTYPE_LINKNONE;
+   config.ssize  = adjust == 1 ? EDMA_8BIT : EDMA_16BIT;
+   config.dsize  = adjust == 1 ? EDMA_8BIT : EDMA_16BIT;
+@@ -1640,7 +1640,7 @@ static void imxrt_lpspi_exchange(FAR struct spi_dev_s * dev,
+   config.daddr  = priv->spibase + IMXRT_LPSPI_TDR_OFFSET;
+   config.soff   = txbuffer ? adjust : 0;
+   config.doff   = 0;
+-  config.iter   = nbytes;
++  config.iter   = nwords;
+   config.flags  = EDMA_CONFIG_LINKTYPE_LINKNONE;
+   config.ssize  = adjust == 1 ? EDMA_8BIT : EDMA_16BIT;
+   config.dsize  = adjust == 1 ? EDMA_8BIT : EDMA_16BIT;
+--
+2.34.1
