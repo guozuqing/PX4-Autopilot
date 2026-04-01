@@ -39,8 +39,13 @@ __BEGIN_DECLS
 #include <arch/board/board.h>
 #include <builtin/builtin.h>
 
+#if defined(CONFIG_USBDEV_COMPOSITE)
+extern int conn_main(int c, char **argv);
+extern int disconn_main(int c, char **argv);
+#else
 extern int sercon_main(int c, char **argv);
 extern int serdis_main(int c, char **argv);
+#endif
 __END_DECLS
 
 #include <px4_platform_common/shutdown.h>
@@ -173,13 +178,30 @@ void CdcAcmAutostart::state_connected()
 void CdcAcmAutostart::state_disconnected()
 {
 	if (_vbus_present && _vbus_present_prev) {
-		PX4_DEBUG("starting sercon");
+		PX4_DEBUG("starting USB device");
+
+#if defined(CONFIG_USBDEV_COMPOSITE)
+		int ret = conn_main(0, nullptr);
+
+		if (ret == EXIT_SUCCESS) {
+			_state = UsbAutoStartState::connecting;
+			PX4_INFO("composite device connected");
+			_reschedule_time = 1_s;
+
+		} else {
+			PX4_ERR("conn_main failed (%d), will retry", ret);
+			_reschedule_time = 2_s;
+		}
+
+#else
 
 		if (sercon_main(0, nullptr) == EXIT_SUCCESS) {
 			_state = UsbAutoStartState::connecting;
 			PX4_DEBUG("state connecting");
 			_reschedule_time = 1_s;
 		}
+
+#endif
 
 	} else if (_vbus_present && !_vbus_present_prev) {
 		// USB just connected, try again soon
@@ -349,7 +371,11 @@ void CdcAcmAutostart::state_disconnecting()
 	}
 
 	// Disconnect serial
+#if defined(CONFIG_USBDEV_COMPOSITE)
+	disconn_main(0, NULL);
+#else
 	serdis_main(0, NULL);
+#endif
 	_state = UsbAutoStartState::disconnected;
 	_active_protocol = UsbProtocol::none;
 }
