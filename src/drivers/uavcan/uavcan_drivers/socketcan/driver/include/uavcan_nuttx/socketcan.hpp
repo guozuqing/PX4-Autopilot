@@ -52,6 +52,7 @@ class CanIface : public uavcan::ICanIface
 {
 	int               _fd{-1};
 	bool              _can_fd{false};
+	bool              _has_rx_traffic{false};  ///< true once a frame has been received on this iface
 
 	//// Send msg structure
 	struct iovec       _send_iov {};

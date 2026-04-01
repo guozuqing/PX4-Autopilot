@@ -460,12 +460,17 @@ int CanIOManager::receive(CanRxFrame& out_frame, MonotonicTime blocking_deadline
             }
         }
 
-        // Write - if buffers are not empty, one frame will be sent for each iface per one receive() call
+        // Write - drain pending TX queues so multi-frame transfers (e.g. RTCM) flush quickly
         for (uint8_t i = 0; i < num_ifaces; i++)
         {
             if (masks.write & (1 << i))
             {
-                (void)sendFromTxQueue(i);  // It may fail, we don't care. Requested operation was receive, not send.
+                int drain_res;
+                do
+                {
+                    drain_res = sendFromTxQueue(i);
+                }
+                while (drain_res > 0 && !tx_queues_[i]->isEmpty());
             }
         }
 

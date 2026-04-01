@@ -50,6 +50,7 @@
 
 #include <nuttx/can.h>
 #include <netpacket/can.h>
+#include <unistd.h>
 
 #define MODULE_NAME "UAVCAN_SOCKETCAN"
 
@@ -198,10 +199,21 @@ uavcan::int16_t CanIface::send(const uavcan::CanFrame &frame, uavcan::MonotonicT
 
 	if (res > 0) {
 		return 1;
-
-	} else {
-		return res;
 	}
+
+	// Retry only on interfaces with live RX traffic (devices that ACK)
+	if (res <= 0 && _has_rx_traffic) {
+		for (int retry = 0; retry < 2; retry++) {
+			usleep(150);
+			res = sendmsg(_fd, &_send_msg, MSG_DONTWAIT);
+
+			if (res > 0) {
+				return 1;
+			}
+		}
+	}
+
+	return res;
 }
 
 uavcan::int16_t CanIface::receive(uavcan::CanFrame &out_frame, uavcan::MonotonicTime &out_ts_monotonic,
@@ -212,6 +224,8 @@ uavcan::int16_t CanIface::receive(uavcan::CanFrame &out_frame, uavcan::Monotonic
 	if (result < 0) {
 		return result;
 	}
+
+	_has_rx_traffic = true;
 
 	/* Copy SocketCAN frame to CanardFrame */
 

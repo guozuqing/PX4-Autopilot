@@ -144,6 +144,8 @@ private:
 	bool _publish_rtcm_stream{false};
 	bool _publish_moving_baseline_data{false};
 
+	uint8_t _gnss_iface_mask{0};  ///< bitmask of CAN ifaces where GNSS Fix/Fix2 was received
+
 	float _rel_heading_accuracy{NAN};
 	float _rel_heading{NAN};
 	bool _rel_heading_valid{false};

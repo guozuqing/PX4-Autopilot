@@ -115,7 +115,8 @@ UavcanGnssBridge::init()
 
 	if (uavcan_pub_rtcm == 1) {
 		_publish_rtcm_stream = true;
-		_pub_rtcm_stream.setPriority(uavcan::TransferPriority::NumericallyMax);
+		_pub_rtcm_stream.setPriority(uavcan::TransferPriority::MiddleLower);
+		_pub_rtcm_stream.setTxTimeout(uavcan::MonotonicDuration::fromMSec(500));
 		_rtcm_stream_pub_perf = perf_alloc(PC_INTERVAL, "uavcan: gnss: rtcm stream pub");
 	}
 
@@ -125,7 +126,8 @@ UavcanGnssBridge::init()
 
 	if (uavcan_pub_mbd == 1) {
 		_publish_moving_baseline_data = true;
-		_pub_moving_baseline_data.setPriority(uavcan::TransferPriority::NumericallyMax);
+		_pub_moving_baseline_data.setPriority(uavcan::TransferPriority::MiddleLower);
+		_pub_moving_baseline_data.setTxTimeout(uavcan::MonotonicDuration::fromMSec(500));
 		_moving_baseline_data_pub_perf = perf_alloc(PC_INTERVAL, "uavcan: gnss: moving baseline data rtcm stream pub");
 	}
 
@@ -162,6 +164,8 @@ UavcanGnssBridge::gnss_fix_sub_cb(const uavcan::ReceivedDataStructure<uavcan::eq
 
 	float vel_cov[9];
 	msg.velocity_covariance.unpackSquareMatrix(vel_cov);
+
+	_gnss_iface_mask |= (1U << msg.getIfaceIndex());
 
 	process_fixx(msg, fix_type, pos_cov, vel_cov, valid_pos_cov, valid_vel_cov, NAN, NAN, NAN, -1, -1, 0, 0);
 }
@@ -334,6 +338,8 @@ UavcanGnssBridge::gnss_fix2_sub_cb(const uavcan::ReceivedDataStructure<uavcan::e
 		jamming_state = msg.ecef_position_velocity[0].position_xyz_mm[2] >> 8;
 		spoofing_state = msg.ecef_position_velocity[0].position_xyz_mm[2] & 0xFF;
 	}
+
+	_gnss_iface_mask |= (1U << msg.getIfaceIndex());
 
 	process_fixx(msg, fix_type, pos_cov, vel_cov, valid_covariances, valid_covariances, heading, heading_offset,
 		     heading_accuracy, noise_per_ms, jamming_indicator, jamming_state, spoofing_state);
@@ -607,6 +613,10 @@ bool UavcanGnssBridge::PublishRTCMStream(const uint8_t *const data, const size_t
 			written += 1;
 		}
 
+		if (_gnss_iface_mask) {
+			_pub_rtcm_stream.getTransferSender().setIfaceMask(_gnss_iface_mask);
+		}
+
 		result = _pub_rtcm_stream.broadcast(msg) >= 0;
 		perf_count(_rtcm_stream_pub_perf);
 		msg.data.clear();
@@ -633,6 +643,10 @@ bool UavcanGnssBridge::PublishMovingBaselineData(const uint8_t *data, size_t dat
 		for (size_t i = 0; i < chunk_size; ++i) {
 			msg.data.push_back(data[written]);
 			written += 1;
+		}
+
+		if (_gnss_iface_mask) {
+			_pub_moving_baseline_data.getTransferSender().setIfaceMask(_gnss_iface_mask);
 		}
 
 		result = _pub_moving_baseline_data.broadcast(msg) >= 0;
